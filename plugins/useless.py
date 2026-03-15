@@ -13,7 +13,7 @@ async def stats(bot: Bot, message: Message):
     await message.reply(BOT_STATS_TEXT.format(uptime=time))
 
 
-@Bot.on_message(filters.private & filters.incoming)
+@Bot.on_message(filters.private & filters.incoming & ~filters.command(['start', 'users', 'broadcast', 'batch', 'genlink', 'stats']))
 async def useless(_,message: Message):
     if USER_REPLY_TEXT:
         await message.reply(USER_REPLY_TEXT)
