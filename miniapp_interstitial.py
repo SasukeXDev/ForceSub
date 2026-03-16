@@ -30,6 +30,13 @@ def _script_for_zone(zone_id: str) -> str:
     return f"<script src='//libtl.com/sdk.js' data-zone='{zone}' data-sdk='show_{zone}'></script>"
 
 
+def _zone_function_name(zone_id: str) -> str:
+    zone = "".join(ch for ch in str(zone_id or "") if ch.isdigit())
+    if not zone:
+        return ""
+    return f"show_{zone}"
+
+
 def _build_monetag_scripts(settings) -> str:
     scripts = []
 
@@ -70,6 +77,8 @@ async def verification_page(request: web.Request) -> web.Response:
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
     monetag_scripts = _build_monetag_scripts(settings)
+    interstitial_fn = _zone_function_name(settings.get("interstitial_zone_id"))
+    rewarded_fn = _zone_function_name(settings.get("rewarded_zone_id"))
 
     html = f"""
     <!doctype html>
@@ -116,6 +125,8 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
+          const interstitialFn = {interstitial_fn!r};
+          const rewardedFn = {rewarded_fn!r};
           const watchBtn = document.getElementById('watchBtn');
           const count = document.getElementById('count');
           const status = document.getElementById('status');
@@ -155,15 +166,32 @@ async def verification_page(request: web.Request) -> web.Response:
             return await res.json();
           }}
 
-          async function showMonetag(zoneType) {{
-            const matches = Object.keys(window).filter(k => k.startsWith('show_') && typeof window[k] === 'function');
-            for (const fnName of matches) {{
+          function adConfig() {{
+            return {{
+              type: 'inApp',
+              inAppSettings: {{
+                frequency: 2,
+                capping: 0.1,
+                interval: 30,
+                timeout: 5,
+                everyPage: false
+              }}
+            }};
+          }}
+
+          async function showMonetag(fnName) {{
+            if (!fnName || typeof window[fnName] !== 'function') return false;
+            try {{
+              const result = await window[fnName](adConfig());
+              return !!result;
+            }} catch (e) {{
               try {{
-                const result = await window[fnName]();
-                if (result) return true;
-              }} catch (e) {{}}
+                const fallback = await window[fnName]();
+                return !!fallback;
+              }} catch (_) {{
+                return false;
+              }}
             }}
-            return false;
           }}
 
           async function openSmartLink() {{
@@ -195,13 +223,20 @@ async def verification_page(request: web.Request) -> web.Response:
               }});
 
               let adOk = true;
-              if (requiredSteps.includes('interstitial') || requiredSteps.includes('rewarded')) {{
-                status.textContent = 'Loading ad...';
+              if (requiredSteps.includes('interstitial')) {{
+                status.textContent = 'Loading interstitial ad...';
                 setProgress(50);
-                adOk = await showMonetag();
+                adOk = await showMonetag(interstitialFn);
+              }}
+
+              if (adOk && requiredSteps.includes('rewarded')) {{
+                status.textContent = 'Loading rewarded ad...';
+                setProgress(65);
+                adOk = await showMonetag(rewardedFn);
               }}
 
               if (!adOk) throw new Error('Ad not completed');
+              status.textContent = 'Interstitial done. Continue with SmartLink...';
               await openSmartLink();
 
               setProgress(80);
