@@ -11,6 +11,9 @@ from database.ads_database import (
 
 
 TOKEN_TTL_MINUTES = 10
+AD_COOLDOWN_SECONDS = 15
+MAX_AD_ATTEMPTS = 2
+MAX_PAGE_VISITS = 8
 
 
 async def create_access_token(user_id: int, base64_payload: str) -> Optional[str]:
@@ -39,6 +42,11 @@ async def create_access_token(user_id: int, base64_payload: str) -> Optional[str
         "used": False,
         "created_at": datetime.utcnow(),
         "expires_at": datetime.utcnow() + timedelta(minutes=TOKEN_TTL_MINUTES),
+        "ad_available_at": datetime.utcnow() + timedelta(seconds=AD_COOLDOWN_SECONDS),
+        "ad_attempts": 0,
+        "page_visits": 0,
+        "blocked": False,
+        "blocked_reason": "",
     }
     return await create_verification_token(payload)
 
@@ -48,6 +56,8 @@ async def get_token_or_none(token: str, user_id: Optional[int] = None) -> Option
     if not data:
         return None
     if data.get("used"):
+        return None
+    if data.get("blocked"):
         return None
     if datetime.utcnow() > data.get("expires_at"):
         return None
@@ -64,6 +74,38 @@ async def complete_step(token: str, step: str) -> Optional[Dict]:
     completed = set(data.get("completed_steps", []))
     completed.add(step)
     await update_verification_token(token, {"completed_steps": list(completed)})
+    return await get_token_or_none(token)
+
+
+async def register_page_visit(token: str) -> Optional[Dict]:
+    data = await get_token_or_none(token)
+    if not data:
+        return None
+
+    visits = int(data.get("page_visits", 0)) + 1
+    patch: Dict[str, object] = {"page_visits": visits}
+    if visits > MAX_PAGE_VISITS:
+        patch["blocked"] = True
+        patch["blocked_reason"] = "refresh_abuse"
+
+    await update_verification_token(token, patch)
+    return await get_token_or_none(token)
+
+
+async def can_start_ad_attempt(token: str) -> Optional[Dict]:
+    data = await get_token_or_none(token)
+    if not data:
+        return None
+
+    attempts = int(data.get("ad_attempts", 0))
+    if attempts >= MAX_AD_ATTEMPTS:
+        await update_verification_token(
+            token,
+            {"blocked": True, "blocked_reason": "too_many_attempts"},
+        )
+        return None
+
+    await update_verification_token(token, {"ad_attempts": attempts + 1})
     return await get_token_or_none(token)
 
 

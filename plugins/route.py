@@ -8,6 +8,8 @@ from miniapp_interstitial import (
     interstitial_miniapp,
     smartlink_done,
     verification_page,
+    start_ad,
+    complete_ad,
 )
 
 routes = web.RouteTableDef()
@@ -41,3 +43,13 @@ async def interstitial_done_route(request):
 @routes.get("/complete/{token}")
 async def complete_route(request):
     return await complete(request)
+
+
+@routes.post("/api/verification/{token}/start-ad")
+async def start_ad_route(request):
+    return await start_ad(request)
+
+
+@routes.post("/api/verification/{token}/complete-ad")
+async def complete_ad_route(request):
+    return await complete_ad(request)
