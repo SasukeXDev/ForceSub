@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>File Verification</title>
+  <link rel="stylesheet" href="/web/verification.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <main class="page">
+    <section class="card enter" id="verification-card">
+      <span class="badge">Protected by secure verification</span>
+      <h1>File Verification Required</h1>
+      <p class="subtitle">Complete a quick verification to unlock your file.</p>
+
+      <div class="progress-wrap" aria-label="Verification progress">
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+
+      <ol class="steps" id="steps-list">
+        <li class="step active"><span>Prepare secure session</span></li>
+        <li class="step"><span>Initialize ad network</span></li>
+        <li class="step"><span>Display verification ad</span></li>
+        <li class="step"><span>Unlock your file</span></li>
+      </ol>
+
+      <button id="watch-ad-btn" class="cta">Watch Ad</button>
+
+      <div id="loading" class="loading hidden" aria-live="polite">
+        <span class="spinner"></span>
+        <span class="loading-text">Initializing verification...</span>
+      </div>
+
+      <a id="continue-link" class="continue hidden" href="#">Continue to unlock</a>
+      <p class="footer">This helps us keep the bot free.</p>
+    </section>
+  </main>
+
+  <script>
+    window.VERIFICATION_CONTEXT = __VERIFICATION_CONTEXT__;
+  </script>
+  <script src="/web/verification.js"></script>
+</body>
+</html>

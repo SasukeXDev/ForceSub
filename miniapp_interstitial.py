@@ -1,8 +1,14 @@
 from aiohttp import web
+import json
+from pathlib import Path
 
 from config import WEB_BASE_URL
 from database.ads_database import get_ad_settings
 from verification_system import complete_step, get_token_or_none
+
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+VERIFICATION_TEMPLATE = WEB_DIR / "verification.html"
 
 
 def _tg_open_link(path: str) -> str:
@@ -64,23 +70,13 @@ async def interstitial_miniapp(request: web.Request) -> web.Response:
     if not script_or_zone:
         return web.Response(text="Interstitial is not configured by admin.", status=500)
 
-    if "<script" in script_or_zone.lower():
-        script_block = script_or_zone
-    else:
-        script_block = f"<script async src='https://a.monetag.com/script.js' data-zone='{script_or_zone}'></script>"
-
-    html = f"""
-    <html>
-    <head><meta name='viewport' content='width=device-width,initial-scale=1'/></head>
-    <body style='font-family:sans-serif;padding:20px;'>
-      <h3>Interstitial Verification</h3>
-      <p>Ad should appear below. Wait for it to load, then tap continue.</p>
-      {script_block}
-      <br/><br/>
-      <a href='{_tg_open_link(f"/interstitial_done/{token}")}'>Continue to unlock</a>
-    </body>
-    </html>
-    """
+    context = {
+        "token": token,
+        "interstitialScript": script_or_zone,
+        "interstitialDoneUrl": _tg_open_link(f"/interstitial_done/{token}"),
+    }
+    template = VERIFICATION_TEMPLATE.read_text(encoding="utf-8")
+    html = template.replace("__VERIFICATION_CONTEXT__", json.dumps(context))
     return web.Response(text=html, content_type="text/html")
 
 

@@ -1,6 +1,8 @@
 #(©)Codexbotz
 #rymme
 
+from pathlib import Path
+
 from aiohttp import web
 from miniapp_interstitial import (
     complete,
@@ -12,10 +14,20 @@ from miniapp_interstitial import (
 
 routes = web.RouteTableDef()
 
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
 
 @routes.get("/", allow_head=True)
 async def root_route_handler(request):
     return web.json_response("CodeXBotz")
+
+
+@routes.get("/web/{filename}")
+async def web_asset_route(request):
+    filename = request.match_info.get("filename", "")
+    if filename not in {"verification.css", "verification.js"}:
+        raise web.HTTPNotFound()
+    return web.FileResponse(WEB_DIR / filename)
 
 
 @routes.get("/verify/{token}")
