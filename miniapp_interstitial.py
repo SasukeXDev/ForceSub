@@ -23,11 +23,15 @@ def _seconds_until(dt: datetime) -> int:
     return max(0, int((dt - now).total_seconds()))
 
 
+def _sanitize_zone_id(zone_id: str) -> str:
+    return "".join(ch for ch in str(zone_id or "") if ch.isdigit())
+
+
 def _script_for_zone(zone_id: str) -> str:
-    zone = "".join(ch for ch in str(zone_id or "") if ch.isdigit())
+    zone = _sanitize_zone_id(zone_id)
     if not zone:
         return ""
-    return f"<script src='//libtl.com/sdk.js' data-zone='{zone}' data-sdk='show_{zone}'></script>"
+    return f"<script async src='https://libtl.com/sdk.js' data-zone='{zone}' data-sdk='show_{zone}'></script>"
 
 
 def _build_monetag_scripts(settings) -> str:
@@ -70,6 +74,8 @@ async def verification_page(request: web.Request) -> web.Response:
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
     monetag_scripts = _build_monetag_scripts(settings)
+    interstitial_zone = _sanitize_zone_id(settings.get("interstitial_zone_id", ""))
+    rewarded_zone = _sanitize_zone_id(settings.get("rewarded_zone_id", ""))
 
     html = f"""
     <!doctype html>
@@ -116,6 +122,11 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
+          const monetagConfig = {{
+            interstitialZoneId: {interstitial_zone!r},
+            rewardedZoneId: {rewarded_zone!r}
+          }};
+
           const watchBtn = document.getElementById('watchBtn');
           const count = document.getElementById('count');
           const status = document.getElementById('status');
@@ -138,7 +149,7 @@ async def verification_page(request: web.Request) -> web.Response:
               return;
             }}
             remaining -= 1;
-            count.textContent = remaining;
+            if (count) count.textContent = remaining;
           }}, 1000);
 
           function setProgress(pct) {{
@@ -151,17 +162,48 @@ async def verification_page(request: web.Request) -> web.Response:
               headers: {{ 'Content-Type': 'application/json' }},
               body: JSON.stringify(payload || {{}})
             }});
-            if (!res.ok) throw new Error('Request failed');
+            if (!res.ok) throw new Error('Request failed: ' + res.status);
             return await res.json();
           }}
 
-          async function showMonetag(zoneType) {{
-            const matches = Object.keys(window).filter(k => k.startsWith('show_') && typeof window[k] === 'function');
-            for (const fnName of matches) {{
+          function sleep(ms) {{
+            return new Promise(resolve => setTimeout(resolve, ms));
+          }}
+
+          function getMonetagFunctions() {{
+            const preferred = [];
+            if (requiredSteps.includes('interstitial') && monetagConfig.interstitialZoneId) {{
+              preferred.push('show_' + monetagConfig.interstitialZoneId);
+            }}
+            if (requiredSteps.includes('rewarded') && monetagConfig.rewardedZoneId) {{
+              preferred.push('show_' + monetagConfig.rewardedZoneId);
+            }}
+
+            const allFns = Object.keys(window)
+              .filter(k => k.startsWith('show_') && typeof window[k] === 'function');
+            return [...new Set([...preferred, ...allFns])];
+          }}
+
+          async function waitForMonetagReady() {{
+            const maxTries = 25;
+            for (let i = 0; i < maxTries; i += 1) {{
+              const fns = getMonetagFunctions();
+              if (fns.length > 0) return fns;
+              await sleep(200);
+            }}
+            return [];
+          }}
+
+          async function showMonetag() {{
+            const fns = await waitForMonetagReady();
+            if (!fns.length) return false;
+
+            for (const fnName of fns) {{
+              if (typeof window[fnName] !== 'function') continue;
               try {{
-                const result = await window[fnName]();
-                if (result) return true;
-              }} catch (e) {{}}
+                const result = await Promise.resolve(window[fnName]());
+                if (result !== false) return true;
+              }} catch (_) {{}}
             }}
             return false;
           }}
@@ -173,9 +215,9 @@ async def verification_page(request: web.Request) -> web.Response:
             if (tg && typeof tg.openLink === 'function') {{
               tg.openLink(smartlink, {{ try_instant_view: false }});
             }} else {{
-              window.open(smartlink, '_blank');
+              window.open(smartlink, '_blank', 'noopener,noreferrer');
             }}
-            await new Promise(r => setTimeout(r, 2500));
+            await sleep(2500);
             return true;
           }}
 
@@ -209,8 +251,8 @@ async def verification_page(request: web.Request) -> web.Response:
               await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
               setProgress(100);
               window.location.href = '/complete/' + token;
-            }} catch (err) {{
-              status.textContent = 'Verification failed. Retry.';
+            }} catch (_) {{
+              status.textContent = 'Ad failed to load. Tap retry to try verification again.';
               retry.style.display = 'block';
               watchBtn.disabled = false;
               watchBtn.textContent = 'Start Verification';
