@@ -32,13 +32,13 @@ async def verification_page(request: web.Request) -> web.Response:
     settings = await get_ad_settings()
     required = data.get("required_steps", [])
     if not required or not settings.get("ads_enabled"):
-        await complete_step(token, "smartlink")
-        await complete_step(token, "interstitial")
+        for step in required:
+            await complete_step(token, step)
         raise web.HTTPFound(_tg_open_link(f"/complete/{token}"))
 
     ad_ready_in = _seconds_until(data.get("ad_available_at", datetime.utcnow()))
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
-    smartlink = settings.get("smartlink_url", "")
+    ad_units = settings.get("ad_units", {})
 
     html = f"""
     <!doctype html>
@@ -52,82 +52,35 @@ async def verification_page(request: web.Request) -> web.Response:
       <script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>
       <style>
         :root {{ --card-bg: rgba(255,255,255,.85); --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#7c3aed; }}
-        @media (prefers-color-scheme: dark) {{
-          :root {{ --card-bg: rgba(15,23,42,.86); --text:#e2e8f0; --muted:#94a3b8; --primary:#60a5fa; --accent:#a78bfa; }}
-        }}
         * {{ box-sizing: border-box; }}
-        body {{
-          margin:0; min-height:100vh; display:grid; place-items:center; padding:20px;
-          font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          color: var(--text);
-          background: linear-gradient(135deg, #dbeafe, #ede9fe 60%, #bfdbfe);
-        }}
-        .card {{
-          width:min(460px,100%); border-radius:22px; padding:22px;
-          background:var(--card-bg); backdrop-filter: blur(12px);
-          box-shadow: 0 12px 40px rgba(2,6,23,.2);
-          animation: in .45s ease;
-        }}
-        @keyframes in {{ from {{ transform:translateY(8px);opacity:0; }} to {{ transform:translateY(0);opacity:1; }} }}
-        h1 {{ margin:0 0 8px; font-size:24px; }}
-        .sub {{ margin:0 0 16px; color:var(--muted); font-size:14px; }}
+        body {{ margin:0; min-height:100vh; display:grid; place-items:center; padding:20px; font-family: Inter, sans-serif; color: var(--text); background: linear-gradient(135deg, #dbeafe, #ede9fe 60%, #bfdbfe); }}
+        .card {{ width:min(460px,100%); border-radius:22px; padding:22px; background:var(--card-bg); backdrop-filter: blur(12px); box-shadow: 0 12px 40px rgba(2,6,23,.2); }}
         .progress {{ height:10px; border-radius:999px; background:rgba(148,163,184,.35); overflow:hidden; margin:10px 0 14px; }}
         .bar {{ height:100%; width:{progress}%; background:linear-gradient(90deg,var(--primary),var(--accent)); transition:width .4s ease; }}
-        .steps {{ margin:0 0 18px; padding-left:18px; color:var(--muted); font-size:14px; line-height:1.7; }}
-        .btn {{
-          width:100%; border:0; border-radius:14px; padding:14px 16px; font-weight:700;
-          background:linear-gradient(90deg,var(--primary),var(--accent)); color:#fff; cursor:pointer;
-          transition:transform .15s ease, opacity .15s ease, box-shadow .2s;
-          box-shadow:0 8px 20px rgba(37,99,235,.35);
-        }}
-        .btn:active {{ transform:scale(.98); }}
-        .btn[disabled] {{ opacity:.55; cursor:not-allowed; box-shadow:none; }}
-        .row {{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:12px; }}
-        .badge {{ font-size:12px; color:var(--muted); }}
-        .status {{ font-size:13px; color:var(--muted); min-height:20px; }}
-        .footer {{ text-align:center; font-size:12px; color:var(--muted); margin-top:16px; }}
-        .retry {{ margin-top:10px; display:none; text-align:center; color:var(--primary); font-size:13px; cursor:pointer; }}
+        .btn {{ width:100%; border:0; border-radius:14px; padding:14px 16px; font-weight:700; background:linear-gradient(90deg,var(--primary),var(--accent)); color:#fff; cursor:pointer; }}
       </style>
     </head>
     <body>
       <div class='card'>
-        <h1>File Verification Required</h1>
-        <p class='sub'>Complete a quick verification to unlock your file.</p>
-
+        <h1>Verification Required</h1>
+        <p>Complete ad verification to unlock your file.</p>
         <div class='progress'><div id='bar' class='bar'></div></div>
-        <ol class='steps'>
-          <li>Initialize verification</li>
-          <li>Load ad</li>
-          <li>Complete verification</li>
-          <li>Redirect to bot</li>
-        </ol>
-
-        <button class='btn' id='watchBtn' disabled>Preparing verification… <span id='count'>{ad_ready_in}</span>s</button>
-        <div class='row'>
-          <div class='status' id='status'>Waiting for cooldown...</div>
-          <div class='badge'>Protected by secure verification</div>
-        </div>
-        <div id='retry' class='retry'>Retry verification</div>
-
-        <div class='footer'>This helps us keep the bot free.</div>
+        <button class='btn' id='watchBtn' disabled>Preparing… <span id='count'>{ad_ready_in}</span>s</button>
+        <p id='status'>Waiting for cooldown...</p>
       </div>
 
       <script>
         (function() {{
           const token = {token!r};
           const requiredSteps = {required!r};
-          const smartlink = {smartlink!r};
+          const adUnits = {ad_units!r};
           const watchBtn = document.getElementById('watchBtn');
           const count = document.getElementById('count');
           const status = document.getElementById('status');
-          const retry = document.getElementById('retry');
           const bar = document.getElementById('bar');
-          const maxProgress = requiredSteps.length ? 100 : 0;
 
-          if (window.Telegram && Telegram.WebApp) {{
-            Telegram.WebApp.ready();
-            Telegram.WebApp.expand();
-          }}
+          const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
+          if (tg) {{ tg.ready(); tg.expand(); }}
 
           let remaining = {ad_ready_in};
           let adStarted = false;
@@ -136,7 +89,7 @@ async def verification_page(request: web.Request) -> web.Response:
             if (remaining <= 0) {{
               clearInterval(timer);
               watchBtn.disabled = false;
-              watchBtn.textContent = 'Watch Ad';
+              watchBtn.textContent = 'Start Verification';
               status.textContent = 'Ready to verify.';
               return;
             }}
@@ -146,6 +99,12 @@ async def verification_page(request: web.Request) -> web.Response:
 
           function setProgress(pct) {{
             bar.style.width = Math.max(5, Math.min(100, pct)) + '%';
+          }}
+
+          function openSmartLink(url) {{
+            if (!url) return;
+            if (tg && typeof tg.openLink === 'function') tg.openLink(url);
+            else window.open(url, '_blank');
           }}
 
           async function callApi(url, payload) {{
@@ -158,56 +117,70 @@ async def verification_page(request: web.Request) -> web.Response:
             return await res.json();
           }}
 
+          async function runSingleStep(step) {{
+            const ad = adUnits[step] || {{}};
+            const value = ad.value || '';
+
+            if (step === 'smartlink') {{
+              openSmartLink(value);
+              await new Promise(r => setTimeout(r, 2500));
+              return true;
+            }}
+
+            if (step === 'interstitial') {{
+              if (typeof window.show_10739699 === 'function') {{
+                const adResult = await window.show_10739699();
+                if (adResult) return true;
+              }}
+              if (value) {{
+                openSmartLink(value);
+                await new Promise(r => setTimeout(r, 2500));
+                return true;
+              }}
+            }}
+
+            if (step === 'rewarded_popup') {{
+              if (value) {{
+                openSmartLink(value);
+                await new Promise(r => setTimeout(r, 3000));
+                return true;
+              }}
+            }}
+            return false;
+          }}
+
           async function startFlow() {{
             if (adStarted) return;
             adStarted = true;
             watchBtn.disabled = true;
-            status.textContent = 'Starting verification...';
-            setProgress(25);
 
             try {{
-              const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
               await callApi('/api/verification/' + token + '/start-ad', {{
                 tg_init_data: tg ? tg.initData : '',
                 tg_user_id: tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null
               }});
 
-              status.textContent = 'Loading ad...';
-              setProgress(50);
-
-              let adOk = false;
-              if (typeof window.show_10739699 === 'function') {{
-                const adResult = await window.show_10739699();
-                adOk = !!adResult;
+              for (let i = 0; i < requiredSteps.length; i++) {{
+                status.textContent = 'Running ' + requiredSteps[i] + '...';
+                setProgress(20 + Math.floor(((i + 1) / requiredSteps.length) * 60));
+                const ok = await runSingleStep(requiredSteps[i]);
+                if (!ok) throw new Error('Step failed: ' + requiredSteps[i]);
               }}
 
-              if (!adOk && smartlink) {{
-                window.open(smartlink, '_blank');
-                await new Promise(r => setTimeout(r, 2500));
-                adOk = true;
-              }}
-
-              if (!adOk) throw new Error('Ad not completed');
-
-              status.textContent = 'Finalizing verification...';
-              setProgress(80);
               await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
+              status.textContent = 'Complete. Redirecting...';
               setProgress(100);
-              status.textContent = 'Verification complete. Redirecting...';
               window.location.href = '/complete/' + token;
             }} catch (err) {{
-              status.textContent = 'Verification failed. Please retry.';
-              retry.style.display = 'block';
+              status.textContent = 'Verification failed. Retry.';
               watchBtn.disabled = false;
-              watchBtn.textContent = 'Watch Ad';
+              watchBtn.textContent = 'Retry Verification';
               adStarted = false;
             }}
           }}
 
-          retry.onclick = () => {{ retry.style.display = 'none'; startFlow(); }};
           watchBtn.onclick = startFlow;
-
-          setProgress(Math.min(20, maxProgress));
+          setProgress(10);
         }})();
       </script>
     </body>
@@ -244,11 +217,8 @@ async def complete_ad(request: web.Request) -> web.Response:
     if not payload.get("ad_completed"):
         return web.json_response({"ok": False, "error": "ad_incomplete"}, status=400)
 
-    required = data.get("required_steps", [])
-    if "smartlink" in required:
-        await complete_step(token, "smartlink")
-    if "interstitial" in required:
-        await complete_step(token, "interstitial")
+    for step in data.get("required_steps", []):
+        await complete_step(token, step)
 
     return web.json_response({"ok": True})
 

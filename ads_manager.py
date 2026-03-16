@@ -2,14 +2,7 @@ from typing import Dict
 
 from database.ads_database import get_ad_settings, update_ad_settings
 
-
-async def set_smartlink(url: str) -> Dict:
-    return await update_ad_settings({"smartlink_url": url.strip(), "smartlink_enabled": bool(url.strip())})
-
-
-async def set_interstitial(script_or_zone: str) -> Dict:
-    value = script_or_zone.strip()
-    return await update_ad_settings({"interstitial_script": value, "interstitial_enabled": bool(value)})
+SUPPORTED_AD_TYPES = {"smartlink", "interstitial", "rewarded_popup"}
 
 
 async def set_ads_enabled(enabled: bool) -> Dict:
@@ -20,14 +13,66 @@ async def set_mode(mode: str) -> Dict:
     return await update_ad_settings({"mode": mode})
 
 
+async def save_ad_unit(ad_type: str, value: str, enabled: bool = True) -> Dict:
+    ad_type = ad_type.strip().lower()
+    if ad_type not in SUPPORTED_AD_TYPES:
+        raise ValueError("unsupported_ad_type")
+
+    settings = await get_ad_settings()
+    ad_units = settings.get("ad_units", {}).copy()
+    ad_units[ad_type] = {
+        "enabled": enabled,
+        "value": value.strip(),
+    }
+    return await update_ad_settings({"ad_units": ad_units})
+
+
+async def remove_ad_unit(ad_type: str) -> Dict:
+    return await save_ad_unit(ad_type, "", enabled=False)
+
+
+async def toggle_ad_unit(ad_type: str, enabled: bool) -> Dict:
+    ad_type = ad_type.strip().lower()
+    if ad_type not in SUPPORTED_AD_TYPES:
+        raise ValueError("unsupported_ad_type")
+
+    settings = await get_ad_settings()
+    ad_units = settings.get("ad_units", {}).copy()
+    current = ad_units.get(ad_type, {})
+    ad_units[ad_type] = {
+        "enabled": enabled,
+        "value": current.get("value", ""),
+    }
+    return await update_ad_settings({"ad_units": ad_units})
+
+
 async def status_text() -> str:
     s = await get_ad_settings()
-    return (
-        "<b>Monetag Ads Status</b>\n"
-        f"Global Ads: <code>{'ON' if s.get('ads_enabled') else 'OFF'}</code>\n"
-        f"Mode: <code>{s.get('mode')}</code>\n"
-        f"SmartLink: <code>{'ON' if s.get('smartlink_enabled') else 'OFF'}</code>\n"
-        f"SmartLink URL Set: <code>{'YES' if s.get('smartlink_url') else 'NO'}</code>\n"
-        f"Interstitial: <code>{'ON' if s.get('interstitial_enabled') else 'OFF'}</code>\n"
-        f"Interstitial Script/Zone Set: <code>{'YES' if s.get('interstitial_script') else 'NO'}</code>"
+    units = s.get("ad_units", {})
+
+    lines = [
+        "<b>Ads Status</b>",
+        f"Global Ads: <code>{'ON' if s.get('ads_enabled') else 'OFF'}</code>",
+        f"Mode: <code>{s.get('mode')}</code>",
+        "",
+        "<b>Configured Ad Units</b>",
+    ]
+
+    for ad_type in ["smartlink", "interstitial", "rewarded_popup"]:
+        unit = units.get(ad_type, {})
+        lines.append(
+            f"• <b>{ad_type}</b> → <code>{'ON' if unit.get('enabled') else 'OFF'}</code> | Value Set: <code>{'YES' if unit.get('value') else 'NO'}</code>"
+        )
+
+    lines.extend(
+        [
+            "",
+            "<b>Commands</b>",
+            "<code>/add_ad smartlink https://example.com</code>",
+            "<code>/edit_ad interstitial ZONE_OR_SCRIPT</code>",
+            "<code>/toggle_ad rewarded_popup on|off</code>",
+            "<code>/remove_ad smartlink</code>",
+            "<code>/set_ad_mode smartlink|interstitial|rewarded_popup|mixed</code>",
+        ]
     )
+    return "\n".join(lines)

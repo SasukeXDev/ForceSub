@@ -22,15 +22,19 @@ async def create_access_token(user_id: int, base64_payload: str) -> Optional[str
 
     if settings.get("ads_enabled"):
         mode = settings.get("mode", "smartlink")
-        if mode == "smartlink" and settings.get("smartlink_enabled"):
-            required_steps = ["smartlink"]
-        elif mode == "interstitial" and settings.get("interstitial_enabled"):
-            required_steps = ["interstitial"]
-        elif mode == "both":
-            if settings.get("smartlink_enabled"):
-                required_steps.append("smartlink")
-            if settings.get("interstitial_enabled"):
-                required_steps.append("interstitial")
+        ad_units = settings.get("ad_units", {})
+
+        enabled_units = [
+            ad_type
+            for ad_type, cfg in ad_units.items()
+            if cfg.get("enabled") and cfg.get("value")
+        ]
+
+        if mode in {"smartlink", "interstitial", "rewarded_popup"}:
+            if mode in enabled_units:
+                required_steps = [mode]
+        elif mode == "mixed":
+            required_steps = enabled_units
 
     token = secrets.token_urlsafe(24)
     payload = {

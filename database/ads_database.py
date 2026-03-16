@@ -7,14 +7,17 @@ ad_settings = database["ad_settings"] if database is not None else None
 verification_tokens = database["verification_tokens"] if database is not None else None
 
 
+DEFAULT_AD_UNITS: Dict[str, Dict[str, Any]] = {
+    "smartlink": {"enabled": False, "value": ""},
+    "interstitial": {"enabled": False, "value": ""},
+    "rewarded_popup": {"enabled": False, "value": ""},
+}
+
 DEFAULT_AD_SETTINGS: Dict[str, Any] = {
     "_id": "global",
     "ads_enabled": False,
-    "smartlink_enabled": False,
-    "interstitial_enabled": False,
-    "smartlink_url": "",
-    "interstitial_script": "",
-    "mode": "smartlink",  # smartlink | interstitial | both
+    "mode": "smartlink",  # smartlink | interstitial | rewarded_popup | mixed
+    "ad_units": DEFAULT_AD_UNITS,
     "updated_at": datetime.utcnow(),
 }
 
@@ -27,6 +30,24 @@ async def get_ad_settings() -> Dict[str, Any]:
     if settings:
         merged = DEFAULT_AD_SETTINGS.copy()
         merged.update(settings)
+
+        units = DEFAULT_AD_UNITS.copy()
+        raw_units = merged.get("ad_units") or {}
+
+        # Backward compatibility for old schema.
+        if merged.get("smartlink_url"):
+            raw_units.setdefault("smartlink", {"enabled": bool(merged.get("smartlink_enabled")), "value": merged.get("smartlink_url", "")})
+        if merged.get("interstitial_script"):
+            raw_units.setdefault("interstitial", {"enabled": bool(merged.get("interstitial_enabled")), "value": merged.get("interstitial_script", "")})
+
+        for ad_type, defaults in DEFAULT_AD_UNITS.items():
+            value = raw_units.get(ad_type, {})
+            units[ad_type] = {
+                "enabled": bool(value.get("enabled", defaults["enabled"])),
+                "value": value.get("value", defaults["value"]),
+            }
+
+        merged["ad_units"] = units
         return merged
 
     ad_settings.insert_one(DEFAULT_AD_SETTINGS.copy())
