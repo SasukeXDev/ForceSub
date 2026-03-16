@@ -37,6 +37,9 @@ FORCE_SUB_CHANNEL = int(os.environ.get("FORCE_SUB_CHANNEL", "0"))
 
 TG_BOT_WORKERS = int(os.environ.get("TG_BOT_WORKERS", "4"))
 
+#Public web URL where bot web server is reachable
+WEB_BASE_URL = os.environ.get("WEB_BASE_URL", "").rstrip("/")
+
 #start message
 START_MSG = os.environ.get("START_MESSAGE", "<b>Heyy there {first},\n\nɪ'ᴍ ​Ayanokoji​, ʏᴏᴜʀ ғʀɪᴇɴᴅʟʏ ʟɪɴᴋ ᴍᴀɴᴀɢᴇʀ ʙᴏᴛ.\nɪ'ᴍ ᴛʜᴇ ɢᴏ-ᴛᴏ ʙᴏᴛ ғᴏʀ ᴍᴀɴᴀɢɪɴɢ ᴀʟʟ ᴛʜᴇ ʟɪɴᴋs ɪɴ ᴛʜᴇ ᴜᴄʜɪʜᴀ ᴄᴏᴍᴍᴜɴɪᴛʏ.\n\nᴀɴᴅ ʏᴏᴜ ᴋɴᴏᴡ ᴡʜᴀᴛ's ᴄᴏᴏʟ? ɪ ᴡᴀs ᴄʀᴇᴀᴛᴇᴅ ʙʏ ᴛʜᴇ ᴏɴᴇ ᴀɴᴅ ᴏɴʟʏ ᴛʜᴇ ʟᴀsᴛ ᴄᴏᴅᴇʀ!</b>")
 try:
