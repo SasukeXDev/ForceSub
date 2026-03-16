@@ -90,6 +90,22 @@ python3 main.py
 /broadcast - broadcast any messages to bot users
 
 /stats - checking your bot uptime
+
+/ads - show ad admin command help
+
+/ads_on - enable ads globally
+
+/ads_off - disable ads globally
+
+/set_smartlink <url> - set Monetag smartlink
+
+/set_interstitial <zone-id-or-script> - set interstitial ad
+
+/set_rewarded <zone-id-or-script> - set rewarded popup ad
+
+/set_ad_mode <smartlink|interstitial|rewarded|both|all> - choose ad flow
+
+/ad_status - current ad configuration
 ```
 
 ### Variables

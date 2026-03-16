@@ -4,6 +4,8 @@ from aiohttp import web
 
 from config import WEB_BASE_URL
 from database.ads_database import get_ad_settings
+DEFAULT_MONETAG_ZONE = "10739699"
+
 from verification_system import (
     can_start_ad_attempt,
     complete_step,
@@ -31,14 +33,13 @@ def _script_for_zone(zone_id: str) -> str:
 
 
 def _build_monetag_scripts(settings) -> str:
-    scripts = []
+    scripts = [_script_for_zone(DEFAULT_MONETAG_ZONE)]
 
     interstitial_script = (settings.get("interstitial_script") or "").strip()
     interstitial_zone = (settings.get("interstitial_zone_id") or "").strip()
     if settings.get("interstitial_enabled"):
-        if interstitial_zone:
-            scripts.append(_script_for_zone(interstitial_zone))
-        elif interstitial_script:
+        scripts.append(_script_for_zone(interstitial_zone or DEFAULT_MONETAG_ZONE))
+        if interstitial_script:
             scripts.append(interstitial_script)
 
     rewarded_script = (settings.get("rewarded_script") or "").strip()
@@ -49,7 +50,11 @@ def _build_monetag_scripts(settings) -> str:
         elif rewarded_script:
             scripts.append(rewarded_script)
 
-    return "\n".join(s for s in scripts if s)
+    unique = []
+    for item in scripts:
+        if item and item not in unique:
+            unique.append(item)
+    return "\n".join(unique)
 
 
 async def verification_page(request: web.Request) -> web.Response:
@@ -155,12 +160,17 @@ async def verification_page(request: web.Request) -> web.Response:
             return await res.json();
           }}
 
-          async function showMonetag(zoneType) {{
-            const matches = Object.keys(window).filter(k => k.startsWith('show_') && typeof window[k] === 'function');
-            for (const fnName of matches) {{
+          async function showMonetag() {{
+            const orderedFns = ['show_10739699'];
+            const dynamicFns = Object.keys(window)
+              .filter(k => k.startsWith('show_') && typeof window[k] === 'function' && !orderedFns.includes(k))
+              .sort();
+
+            for (const fnName of orderedFns.concat(dynamicFns)) {{
+              if (typeof window[fnName] !== 'function') continue;
               try {{
                 const result = await window[fnName]();
-                if (result) return true;
+                if (result !== false) return true;
               }} catch (e) {{}}
             }}
             return false;

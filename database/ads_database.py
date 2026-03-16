@@ -16,7 +16,9 @@ DEFAULT_AD_SETTINGS: Dict[str, Any] = {
     "smartlink_url": "",
     "interstitial_script": "",
     "rewarded_script": "",
-    "mode": "smartlink",  # smartlink | interstitial | both
+    "interstitial_zone_id": "",
+    "rewarded_zone_id": "",
+    "mode": "smartlink",  # smartlink | interstitial | rewarded | both | all
     "updated_at": datetime.utcnow(),
 }
 
