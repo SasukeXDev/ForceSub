@@ -12,8 +12,10 @@ DEFAULT_AD_SETTINGS: Dict[str, Any] = {
     "ads_enabled": False,
     "smartlink_enabled": False,
     "interstitial_enabled": False,
+    "rewarded_enabled": False,
     "smartlink_url": "",
     "interstitial_script": "",
+    "rewarded_script": "",
     "mode": "smartlink",  # smartlink | interstitial | both
     "updated_at": datetime.utcnow(),
 }
