@@ -6,13 +6,14 @@
   <title>File Verification</title>
   <link rel="stylesheet" href="/web/verification.css" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="//libtl.com/sdk.js" data-zone="10739699" data-sdk="show_10739699"></script>
 </head>
 <body>
   <main class="page">
     <section class="card enter" id="verification-card">
-      <span class="badge">Protected by secure verification</span>
+      <span class="badge">Protected verification</span>
       <h1>File Verification Required</h1>
-      <p class="subtitle">Complete a quick verification to unlock your file.</p>
+      <p class="subtitle">Complete a short ad verification to unlock your file safely.</p>
 
       <div class="progress-wrap" aria-label="Verification progress">
         <div class="progress-track">
@@ -23,11 +24,11 @@
       <ol class="steps" id="steps-list">
         <li class="step active"><span>Prepare secure session</span></li>
         <li class="step"><span>Initialize ad network</span></li>
-        <li class="step"><span>Display verification ad</span></li>
+        <li class="step"><span>Show verification ad</span></li>
         <li class="step"><span>Unlock your file</span></li>
       </ol>
 
-      <button id="watch-ad-btn" class="cta">Watch Ad</button>
+      <button id="watch-ad-btn" class="cta" type="button">Watch Ad</button>
 
       <div id="loading" class="loading hidden" aria-live="polite">
         <span class="spinner"></span>
@@ -35,7 +36,8 @@
       </div>
 
       <a id="continue-link" class="continue hidden" href="#">Continue to unlock</a>
-      <p class="footer">This helps us keep the bot free.</p>
+      <p id="status-text" class="status" aria-live="polite"></p>
+      <p class="footer">Thanks for supporting free file delivery.</p>
     </section>
   </main>
 
