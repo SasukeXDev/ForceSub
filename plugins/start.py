@@ -3,7 +3,7 @@ import asyncio
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import Bot
 from config import (
@@ -128,7 +128,7 @@ async def start_command(client: Client, message: Message):
 
         verify_url = f"{WEB_BASE_URL}/verify/{token}"
         kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✅ Verify & Continue", web_app=WebAppInfo(url=verify_url))]]
+            [[InlineKeyboardButton("✅ Verify & Continue", url=verify_url)]]
         )
         await message.reply_text(
             "Before receiving your file, complete Monetag verification.\n"
