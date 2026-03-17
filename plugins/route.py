@@ -4,6 +4,8 @@
 from aiohttp import web
 from miniapp_interstitial import (
     complete,
+    complete_verification,
+    init_verification,
     interstitial_done,
     interstitial_miniapp,
     smartlink_done,
@@ -41,3 +43,13 @@ async def interstitial_done_route(request):
 @routes.get("/complete/{token}")
 async def complete_route(request):
     return await complete(request)
+
+
+@routes.post("/api/verify/{token}/init")
+async def verification_init_route(request):
+    return await init_verification(request)
+
+
+@routes.post("/api/verify/{token}/complete")
+async def verification_complete_route(request):
+    return await complete_verification(request)
