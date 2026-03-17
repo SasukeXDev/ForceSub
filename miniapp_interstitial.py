@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-
 from aiohttp import web
 
 from config import WEB_BASE_URL
@@ -27,39 +26,36 @@ def _script_for_zone(zone_id: str) -> str:
     zone = "".join(ch for ch in str(zone_id or "") if ch.isdigit())
     if not zone:
         return ""
-    return f"<script src='//libtl.com/sdk.js' data-zone='{zone}' data-sdk='show_{zone}'></script>"
+    # ✅ FIX: force https
+    return f"<script src='https://libtl.com/sdk.js' data-zone='{zone}' data-sdk='show_{zone}'></script>"
 
 
 def _build_monetag_scripts(settings) -> str:
     scripts = []
 
-    interstitial_script = (settings.get("interstitial_script") or "").strip()
-    interstitial_zone = (settings.get("interstitial_zone_id") or "").strip()
     if settings.get("interstitial_enabled"):
-        if interstitial_zone:
-            scripts.append(_script_for_zone(interstitial_zone))
-        elif interstitial_script:
-            scripts.append(interstitial_script)
+        zone = (settings.get("interstitial_zone_id") or "").strip()
+        if zone:
+            scripts.append(_script_for_zone(zone))
 
-    rewarded_script = (settings.get("rewarded_script") or "").strip()
-    rewarded_zone = (settings.get("rewarded_zone_id") or "").strip()
     if settings.get("rewarded_enabled"):
-        if rewarded_zone:
-            scripts.append(_script_for_zone(rewarded_zone))
-        elif rewarded_script:
-            scripts.append(rewarded_script)
+        zone = (settings.get("rewarded_zone_id") or "").strip()
+        if zone:
+            scripts.append(_script_for_zone(zone))
 
-    return "\n".join(s for s in scripts if s)
+    return "\n".join(scripts)
 
 
 async def verification_page(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     data = await register_page_visit(token)
+
     if not data:
-        return web.Response(text="Verification token invalid, expired, or blocked.", status=400)
+        return web.Response(text="Invalid token", status=400)
 
     settings = await get_ad_settings()
     required = data.get("required_steps", [])
+
     if not required or not settings.get("ads_enabled"):
         await complete_step(token, "smartlink")
         await complete_step(token, "interstitial")
@@ -67,245 +63,163 @@ async def verification_page(request: web.Request) -> web.Response:
         raise web.HTTPFound(_tg_open_link(f"/complete/{token}"))
 
     ad_ready_in = _seconds_until(data.get("ad_available_at", datetime.utcnow()))
-    progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
     monetag_scripts = _build_monetag_scripts(settings)
 
     html = f"""
     <!doctype html>
-    <html lang='en'>
+    <html>
     <head>
-      <meta charset='utf-8' />
-      <meta name='viewport' content='width=device-width,initial-scale=1,viewport-fit=cover' />
-      <meta name='theme-color' content='#0f172a' />
-      <title>Uchiha Developer | Verification</title>
+      <meta name='viewport' content='width=device-width'>
       <script src='https://telegram.org/js/telegram-web-app.js'></script>
       {monetag_scripts}
-      <style>
-        * {{ box-sizing: border-box; }}
-        body {{ margin:0; min-height:100vh; display:grid; place-items:center; padding:20px; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:#e2e8f0; background: radial-gradient(circle at top, #1e293b 0%, #020617 65%); }}
-        .card {{ width:min(500px,100%); border-radius:20px; padding:22px; background:rgba(15,23,42,.85); border:1px solid rgba(148,163,184,.2); box-shadow:0 20px 48px rgba(2,6,23,.5); }}
-        h1 {{ margin:0 0 8px; font-size:24px; }}
-        .sub {{ margin:0 0 16px; color:#94a3b8; }}
-        .progress {{ height:10px; border-radius:999px; background:#334155; overflow:hidden; margin-bottom:14px; }}
-        .bar {{ height:100%; width:{progress}%; background:linear-gradient(90deg,#22d3ee,#6366f1); transition:width .35s ease; }}
-        .steps {{ color:#cbd5e1; margin:0 0 14px; padding-left:18px; line-height:1.6; }}
-        .btn {{ width:100%; border:0; border-radius:14px; padding:14px; font-weight:700; color:#fff; background:linear-gradient(90deg,#06b6d4,#4f46e5); cursor:pointer; }}
-        .btn[disabled] {{ opacity:.6; cursor:not-allowed; }}
-        .status {{ margin-top:12px; font-size:14px; color:#93c5fd; min-height:20px; }}
-        .retry {{ display:none; margin-top:10px; color:#22d3ee; cursor:pointer; text-align:center; }}
-      </style>
     </head>
-    <body>
-      <div class='card'>
-        <h1>Uchiha Developer</h1>
-        <p class='sub'>Complete Monetag verification to unlock your file.</p>
-        <div class='progress'><div id='bar' class='bar'></div></div>
-        <ol class='steps'>
-          <li>Load interstitial/rewarded ad</li>
-          <li>Open SmartLink verification</li>
-          <li>Return and unlock in bot</li>
-        </ol>
-        <button class='btn' id='watchBtn' disabled>Preparing... <span id='count'>{ad_ready_in}</span>s</button>
-        <div class='status' id='status'>Waiting for cooldown...</div>
-        <div id='retry' class='retry'>Retry verification</div>
-      </div>
+    <body style="background:#020617;color:white;text-align:center;padding:20px;font-family:sans-serif;">
+
+      <h2>Verification Required</h2>
+      <button id="btn" disabled>Loading... {ad_ready_in}s</button>
+      <p id="status">Please wait...</p>
 
       <script>
-        (function() {{
-          const token = {token!r};
-          const requiredSteps = {required!r};
-          const smartlink = {smartlink!r};
-          const watchBtn = document.getElementById('watchBtn');
-          const count = document.getElementById('count');
-          const status = document.getElementById('status');
-          const retry = document.getElementById('retry');
-          const bar = document.getElementById('bar');
+      const token = "{token}";
+      const smartlink = "{smartlink}";
+      let remaining = {ad_ready_in};
+      let started = false;
 
-          if (window.Telegram && Telegram.WebApp) {{
-            Telegram.WebApp.ready();
-            Telegram.WebApp.expand();
-          }}
+      const btn = document.getElementById("btn");
+      const status = document.getElementById("status");
 
-          let adStarted = false;
-          let remaining = {ad_ready_in};
-          const timer = setInterval(() => {{
-            if (remaining <= 0) {{
-              clearInterval(timer);
-              watchBtn.disabled = false;
-              watchBtn.textContent = 'Start Verification';
-              status.textContent = 'Ready.';
-              return;
+      // ✅ wait for SDK
+      function waitForSdk() {{
+        return new Promise((resolve, reject) => {{
+          let t = 0;
+          const i = setInterval(() => {{
+            const fn = Object.keys(window).find(k => k.startsWith("show_"));
+            if (fn && typeof window[fn] === "function") {{
+              clearInterval(i);
+              resolve(window[fn]);
             }}
-            remaining -= 1;
-            count.textContent = remaining;
-          }}, 1000);
-
-          function setProgress(pct) {{
-            bar.style.width = Math.max(5, Math.min(100, pct)) + '%';
-          }}
-
-          async function callApi(url, payload) {{
-            const res = await fetch(url, {{
-              method: 'POST',
-              headers: {{ 'Content-Type': 'application/json' }},
-              body: JSON.stringify(payload || {{}})
-            }});
-            if (!res.ok) throw new Error('Request failed');
-            return await res.json();
-          }}
-
-          async function showMonetag(zoneType) {{
-            const matches = Object.keys(window).filter(k => k.startsWith('show_') && typeof window[k] === 'function');
-            for (const fnName of matches) {{
-              try {{
-                const result = await window[fnName]();
-                if (result) return true;
-              }} catch (e) {{}}
+            t += 100;
+            if (t > 5000) {{
+              clearInterval(i);
+              reject("SDK timeout");
             }}
-            return false;
-          }}
+          }}, 100);
+        }});
+      }}
 
-          async function openSmartLink() {{
-            if (!smartlink || !requiredSteps.includes('smartlink')) return true;
-            status.textContent = 'Opening SmartLink...';
-            const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
-            if (tg && typeof tg.openLink === 'function') {{
-              tg.openLink(smartlink, {{ try_instant_view: false }});
+      // countdown
+      const timer = setInterval(() => {{
+        if (remaining <= 0) {{
+          clearInterval(timer);
+          btn.disabled = false;
+          btn.innerText = "Start Verification";
+          status.innerText = "Ready";
+        }} else {{
+          remaining--;
+          btn.innerText = "Loading... " + remaining + "s";
+        }}
+      }}, 1000);
+
+      async function start() {{
+        if (started) return;
+        started = true;
+
+        btn.disabled = true;
+        status.innerText = "Loading ad...";
+
+        try {{
+          const showAd = await waitForSdk();
+
+          // ✅ CORRECT Monetag call
+          await showAd({{
+            type: "inApp",
+            inAppSettings: {{
+              frequency: 2,
+              capping: 0.1,
+              interval: 30,
+              timeout: 5,
+              everyPage: false
+            }}
+          }});
+
+          status.innerText = "Opening link...";
+
+          if (smartlink) {{
+            if (window.Telegram && Telegram.WebApp) {{
+              Telegram.WebApp.openLink(smartlink);
             }} else {{
-              window.open(smartlink, '_blank');
-            }}
-            await new Promise(r => setTimeout(r, 2500));
-            return true;
-          }}
-
-          async function startFlow() {{
-            if (adStarted) return;
-            adStarted = true;
-            watchBtn.disabled = true;
-            retry.style.display = 'none';
-            setProgress(20);
-            status.textContent = 'Starting verification...';
-
-            try {{
-              const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
-              await callApi('/api/verification/' + token + '/start-ad', {{
-                tg_init_data: tg ? tg.initData : '',
-                tg_user_id: tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null
-              }});
-
-              let adOk = true;
-              if (requiredSteps.includes('interstitial') || requiredSteps.includes('rewarded')) {{
-                status.textContent = 'Loading ad...';
-                setProgress(50);
-                adOk = await showMonetag();
-              }}
-
-              if (!adOk) throw new Error('Ad not completed');
-              await openSmartLink();
-
-              setProgress(80);
-              status.textContent = 'Finalizing...';
-              await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
-              setProgress(100);
-              window.location.href = '/complete/' + token;
-            }} catch (err) {{
-              status.textContent = 'Verification failed. Retry.';
-              retry.style.display = 'block';
-              watchBtn.disabled = false;
-              watchBtn.textContent = 'Start Verification';
-              adStarted = false;
+              window.location.href = smartlink;
             }}
           }}
 
-          retry.onclick = startFlow;
-          watchBtn.onclick = startFlow;
-          setProgress(10);
-        }})();
+          await new Promise(r => setTimeout(r, 2500));
+
+          await fetch("/api/verification/" + token + "/complete-ad", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ ad_completed: true }})
+          }});
+
+          window.location.href = "/complete/" + token;
+
+        }} catch (e) {{
+          console.log(e);
+          status.innerText = "Ad failed. Retrying...";
+          btn.disabled = false;
+          started = false;
+        }}
+      }}
+
+      btn.onclick = start;
       </script>
     </body>
     </html>
     """
+
     return web.Response(text=html, content_type="text/html")
 
+
+# ---------------- API ----------------
 
 async def start_ad(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     data = await can_start_ad_attempt(token)
-    if not data:
-        return web.json_response({"ok": False, "error": "token_invalid_or_blocked"}, status=400)
 
-    payload = await request.json() if request.can_read_body else {}
-    tg_user_id = payload.get("tg_user_id")
-    token_user_id = data.get("user_id")
-    if tg_user_id and token_user_id and int(tg_user_id) != int(token_user_id):
-        return web.json_response({"ok": False, "error": "user_mismatch"}, status=403)
+    if not data:
+        return web.json_response({"ok": False}, status=400)
 
     if _seconds_until(data.get("ad_available_at", datetime.utcnow())) > 0:
-        return web.json_response({"ok": False, "error": "cooldown_not_ready"}, status=429)
+        return web.json_response({"ok": False, "cooldown": True}, status=429)
 
-    return web.json_response({"ok": True, "attempts": data.get("ad_attempts", 0)})
+    return web.json_response({"ok": True})
 
 
 async def complete_ad(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     data = await get_token_or_none(token)
+
     if not data:
-        return web.json_response({"ok": False, "error": "token_invalid"}, status=400)
+        return web.json_response({"ok": False}, status=400)
 
-    payload = await request.json() if request.can_read_body else {}
-    if not payload.get("ad_completed"):
-        return web.json_response({"ok": False, "error": "ad_incomplete"}, status=400)
-
-    required = data.get("required_steps", [])
-    if "smartlink" in required:
-        await complete_step(token, "smartlink")
-    if "interstitial" in required:
-        await complete_step(token, "interstitial")
-    if "rewarded" in required:
-        await complete_step(token, "rewarded")
+    await complete_step(token, "interstitial")
+    await complete_step(token, "rewarded")
+    await complete_step(token, "smartlink")
 
     return web.json_response({"ok": True})
 
 
-async def smartlink_done(request: web.Request) -> web.Response:
-    token = request.match_info.get("token", "")
-    data = await complete_step(token, "smartlink")
-    if not data:
-        return web.Response(text="Invalid token.", status=400)
-    raise web.HTTPFound(_tg_open_link(f"/verify/{token}"))
-
-
-async def interstitial_miniapp(request: web.Request) -> web.Response:
-    raise web.HTTPFound(_tg_open_link(f"/verify/{request.match_info.get('token', '')}"))
-
-
-async def interstitial_done(request: web.Request) -> web.Response:
-    token = request.match_info.get("token", "")
-    data = await complete_step(token, "interstitial")
-    if not data:
-        return web.Response(text="Invalid token.", status=400)
-    raise web.HTTPFound(_tg_open_link(f"/complete/{token}"))
-
-
 async def complete(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
-    data = await get_token_or_none(token)
-    if not data:
-        return web.Response(text="Token expired. Re-open your original bot link.", status=400)
     deep_link = f"https://t.me/{request.app['bot_username']}?start=unlock_{token}"
-    html = f"""
-    <html><body style='font-family:sans-serif;padding:20px;background:#020617;color:#e2e8f0'>
-    <h3>Verification complete</h3>
-    <p>Returning you to the bot now...</p>
-    <a href='{deep_link}'>Return to bot and unlock file</a>
+
+    return web.Response(text=f"""
+    <html>
+    <body style="background:#000;color:#fff;text-align:center;padding:20px;">
+    <h3>Done ✅</h3>
     <script>
-    if (window.Telegram && Telegram.WebApp && Telegram.WebApp.openTelegramLink) {{
-      Telegram.WebApp.openTelegramLink({deep_link!r});
-    }} else {{
-      setTimeout(function(){{window.location.href={deep_link!r};}}, 1200);
-    }}
+    setTimeout(()=>window.location.href="{deep_link}",1000);
     </script>
-    </body></html>
-    """
-    return web.Response(text=html, content_type="text/html")
+    </body>
+    </html>
+    """, content_type="text/html")
