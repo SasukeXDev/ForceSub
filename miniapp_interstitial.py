@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 
 from aiohttp import web
 
@@ -23,6 +24,13 @@ def _seconds_until(dt: datetime) -> int:
     return max(0, int((dt - now).total_seconds()))
 
 
+def _monetag_config(raw_value: str) -> tuple[str, str]:
+    value = (raw_value or "").strip()
+    match = re.search(r"(\d{5,})", value)
+    zone = match.group(1) if match else "10739699"
+    return zone, f"show_{zone}"
+
+
 async def verification_page(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     data = await register_page_visit(token)
@@ -39,6 +47,7 @@ async def verification_page(request: web.Request) -> web.Response:
     ad_ready_in = _seconds_until(data.get("ad_available_at", datetime.utcnow()))
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
+    zone_id, sdk_function = _monetag_config(settings.get("interstitial_script", ""))
 
     html = f"""
     <!doctype html>
@@ -49,7 +58,7 @@ async def verification_page(request: web.Request) -> web.Response:
       <meta name='theme-color' content='#111827' />
       <title>File Verification Required</title>
       <script src='https://telegram.org/js/telegram-web-app.js'></script>
-      <script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>
+      <script src='https://libtl.com/sdk.js' data-zone='{zone_id}' data-sdk='{sdk_function}'></script>
       <style>
         :root {{ --card-bg: rgba(255,255,255,.85); --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#7c3aed; }}
         @media (prefers-color-scheme: dark) {{
@@ -117,6 +126,7 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
+          const sdkFunction = {sdk_function!r};
           const watchBtn = document.getElementById('watchBtn');
           const count = document.getElementById('count');
           const status = document.getElementById('status');
@@ -176,13 +186,18 @@ async def verification_page(request: web.Request) -> web.Response:
               setProgress(50);
 
               let adOk = false;
-              if (typeof window.show_10739699 === 'function') {{
-                const adResult = await window.show_10739699();
-                adOk = !!adResult;
+              if (typeof window[sdkFunction] === 'function') {{
+                const adResult = await window[sdkFunction]();
+                adOk = adResult !== false;
               }}
 
               if (!adOk && smartlink) {{
-                window.open(smartlink, '_blank');
+                const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
+                if (tg && typeof tg.openLink === 'function') {{
+                  tg.openLink(smartlink, {{ try_instant_view: false }});
+                }} else {{
+                  window.open(smartlink, '_blank', 'noopener,noreferrer');
+                }}
                 await new Promise(r => setTimeout(r, 2500));
                 adOk = true;
               }}
