@@ -40,6 +40,21 @@ async def verification_page(request: web.Request) -> web.Response:
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
 
+    script_or_zone = (settings.get("interstitial_script") or "").strip()
+    interstitial_callable = "show_10739699"
+    if script_or_zone and "<script" not in script_or_zone.lower():
+        interstitial_callable = f"show_{script_or_zone}"
+        interstitial_script_block = (
+            f"<script src='//libtl.com/sdk.js' data-zone='{script_or_zone}' "
+            f"data-sdk='{interstitial_callable}'></script>"
+        )
+    elif script_or_zone:
+        interstitial_script_block = script_or_zone
+    else:
+        interstitial_script_block = (
+            "<script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>"
+        )
+
     html = f"""
     <!doctype html>
     <html lang='en'>
@@ -49,7 +64,7 @@ async def verification_page(request: web.Request) -> web.Response:
       <meta name='theme-color' content='#111827' />
       <title>File Verification Required</title>
       <script src='https://telegram.org/js/telegram-web-app.js'></script>
-      <script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>
+      {interstitial_script_block}
       <style>
         :root {{ --card-bg: rgba(255,255,255,.85); --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#7c3aed; }}
         @media (prefers-color-scheme: dark) {{
@@ -117,6 +132,7 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
+          const interstitialFnName = {interstitial_callable!r};
           const needInterstitial = requiredSteps.includes('interstitial');
           const needSmartlink = requiredSteps.includes('smartlink');
           const watchBtn = document.getElementById('watchBtn');
@@ -170,6 +186,27 @@ async def verification_page(request: web.Request) -> web.Response:
             return true;
           }}
 
+          async function waitForInterstitialFn() {{
+            const started = Date.now();
+            while ((Date.now() - started) < 8000) {{
+              if (typeof window[interstitialFnName] === 'function') return window[interstitialFnName];
+              await new Promise(r => setTimeout(r, 250));
+            }}
+            return null;
+          }}
+
+          async function playInterstitial() {{
+            let fn = window[interstitialFnName];
+            if (typeof fn !== 'function') {{
+              fn = await waitForInterstitialFn();
+            }}
+            if (typeof fn !== 'function') throw new Error('Interstitial SDK not ready');
+
+            const result = await fn();
+            if (result === false) throw new Error('Interstitial was not shown');
+            return true;
+          }}
+
           async function startFlow() {{
             if (adStarted) return;
             adStarted = true;
@@ -187,13 +224,7 @@ async def verification_page(request: web.Request) -> web.Response:
               if (needInterstitial) {{
                 status.textContent = 'Loading interstitial...';
                 setProgress(45);
-
-                let adOk = false;
-                if (typeof window.show_10739699 === 'function') {{
-                  const adResult = await window.show_10739699();
-                  adOk = !!adResult;
-                }}
-                if (!adOk) throw new Error('Interstitial ad not completed');
+                await playInterstitial();
               }}
 
               await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
