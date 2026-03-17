@@ -10,7 +10,6 @@ from miniapp_interstitial import (
     verification_page,
     start_ad,
     complete_ad,
-    complete_smartlink,
 )
 
 routes = web.RouteTableDef()
@@ -54,8 +53,3 @@ async def start_ad_route(request):
 @routes.post("/api/verification/{token}/complete-ad")
 async def complete_ad_route(request):
     return await complete_ad(request)
-
-
-@routes.post("/api/verification/{token}/complete-smartlink")
-async def complete_smartlink_route(request):
-    return await complete_smartlink(request)
