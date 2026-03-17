@@ -3,14 +3,7 @@ from pyrogram.types import Message
 
 from bot import Bot
 from config import ADMINS
-from ads_manager import (
-    set_ads_enabled,
-    set_interstitial,
-    set_mode,
-    set_rewarded,
-    set_smartlink,
-    status_text,
-)
+from ads_manager import set_ads_enabled, set_interstitial, set_mode, set_smartlink, status_text
 
 
 @Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("enable_ads"))
@@ -24,28 +17,6 @@ async def disable_ads(_, message: Message):
     await set_ads_enabled(False)
     await message.reply_text("✅ Ads disabled globally.")
 
-
-
-
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("set_rewarded"))
-async def set_rewarded_cmd(_, message: Message):
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /set_rewarded <zone-id-or-script>")
-        return
-    await set_rewarded(message.text.split(" ", 1)[1])
-    await message.reply_text("✅ Rewarded Popup config saved and enabled.")
-
-
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("ads_on"))
-async def ads_on_cmd(_, message: Message):
-    await set_ads_enabled(True)
-    await message.reply_text("✅ Ads enabled globally.")
-
-
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("ads_off"))
-async def ads_off_cmd(_, message: Message):
-    await set_ads_enabled(False)
-    await message.reply_text("✅ Ads disabled globally.")
 
 @Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("set_smartlink"))
 async def set_smartlink_cmd(_, message: Message):
@@ -68,12 +39,12 @@ async def set_interstitial_cmd(_, message: Message):
 @Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("set_ad_mode"))
 async def set_ad_mode_cmd(_, message: Message):
     if len(message.command) < 2:
-        await message.reply_text("Usage: /set_ad_mode smartlink|interstitial|rewarded|both|all")
+        await message.reply_text("Usage: /set_ad_mode smartlink|interstitial|both")
         return
 
     mode = message.command[1].strip().lower()
-    if mode not in {"smartlink", "interstitial", "rewarded", "both", "all"}:
-        await message.reply_text("❌ Invalid mode. Use: smartlink, interstitial, rewarded, both, or all")
+    if mode not in {"smartlink", "interstitial", "both"}:
+        await message.reply_text("❌ Invalid mode. Use: smartlink, interstitial, or both")
         return
 
     await set_mode(mode)
