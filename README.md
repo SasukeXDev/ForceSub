@@ -35,6 +35,11 @@ I Guess This Will Be Usefull For Many People.....😇.
 
 
 ### Features
+### WebApp Home
+- `/` now serves a custom WebApp-style home page branded as **Uchiha Developer**.
+- You can pass a token from query params (`?token=<token>` or `?verify=<token>`) and it will open `/verify/<token>`.
+- In Telegram, the page uses `Telegram.WebApp.openLink(...)` so verification opens properly inside the WebApp flow.
+
 - Fully customisable.
 - Customisable welcome & Forcesub messages.
 - More than one Posts in One Link.
