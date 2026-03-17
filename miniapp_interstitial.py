@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import re
 
 from aiohttp import web
 
@@ -41,24 +40,6 @@ async def verification_page(request: web.Request) -> web.Response:
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
 
-    script_or_zone = (settings.get("interstitial_script") or "").strip()
-    interstitial_callable = "show_10739699"
-    if script_or_zone and "<script" not in script_or_zone.lower():
-        interstitial_callable = f"show_{script_or_zone}"
-        interstitial_script_block = (
-            f"<script src='//libtl.com/sdk.js' data-zone='{script_or_zone}' "
-            f"data-sdk='{interstitial_callable}'></script>"
-        )
-    elif script_or_zone:
-        interstitial_script_block = script_or_zone
-        match = re.search(r"data-sdk\s*=\s*['\"]([^'\"]+)['\"]", script_or_zone, flags=re.IGNORECASE)
-        if match:
-            interstitial_callable = match.group(1)
-    else:
-        interstitial_script_block = (
-            "<script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>"
-        )
-
     html = f"""
     <!doctype html>
     <html lang='en'>
@@ -68,7 +49,7 @@ async def verification_page(request: web.Request) -> web.Response:
       <meta name='theme-color' content='#111827' />
       <title>File Verification Required</title>
       <script src='https://telegram.org/js/telegram-web-app.js'></script>
-      {interstitial_script_block}
+      <script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>
       <style>
         :root {{ --card-bg: rgba(255,255,255,.85); --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#7c3aed; }}
         @media (prefers-color-scheme: dark) {{
@@ -136,15 +117,12 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
-          const interstitialFnName = {interstitial_callable!r};
-          const interstitialCandidates = Array.from(new Set([interstitialFnName, 'show_10739699']));
-          const needInterstitial = requiredSteps.includes('interstitial');
-          const needSmartlink = requiredSteps.includes('smartlink');
           const watchBtn = document.getElementById('watchBtn');
           const count = document.getElementById('count');
           const status = document.getElementById('status');
           const retry = document.getElementById('retry');
           const bar = document.getElementById('bar');
+          const maxProgress = requiredSteps.length ? 100 : 0;
 
           if (window.Telegram && Telegram.WebApp) {{
             Telegram.WebApp.ready();
@@ -180,48 +158,6 @@ async def verification_page(request: web.Request) -> web.Response:
             return await res.json();
           }}
 
-          function openSmartLink() {{
-            if (!smartlink) return false;
-            const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
-            if (tg && typeof tg.openLink === 'function') {{
-              tg.openLink(smartlink);
-              return true;
-            }}
-            window.open(smartlink, '_blank');
-            return true;
-          }}
-
-          async function waitForInterstitialFn() {{
-            const started = Date.now();
-            while ((Date.now() - started) < 8000) {{
-              for (const fnName of interstitialCandidates) {{
-                if (typeof window[fnName] === 'function') return window[fnName];
-              }}
-              await new Promise(r => setTimeout(r, 250));
-            }}
-            return null;
-          }}
-
-          async function playInterstitial() {{
-            let fn = null;
-            for (const fnName of interstitialCandidates) {{
-              if (typeof window[fnName] === 'function') {{
-                fn = window[fnName];
-                break;
-              }}
-            }}
-            if (typeof fn !== 'function') {{
-              fn = await waitForInterstitialFn();
-            }}
-            if (typeof fn !== 'function') throw new Error('Interstitial SDK not ready');
-
-            const result = await fn({{
-              type: 'interstitial',
-            }});
-            if (result === false) throw new Error('Interstitial was not shown');
-            return true;
-          }}
-
           async function startFlow() {{
             if (adStarted) return;
             adStarted = true;
@@ -236,24 +172,26 @@ async def verification_page(request: web.Request) -> web.Response:
                 tg_user_id: tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null
               }});
 
-              if (needInterstitial) {{
-                status.textContent = 'Loading interstitial...';
-                setProgress(45);
-                await playInterstitial();
+              status.textContent = 'Loading ad...';
+              setProgress(50);
+
+              let adOk = false;
+              if (typeof window.show_10739699 === 'function') {{
+                const adResult = await window.show_10739699();
+                adOk = !!adResult;
               }}
 
-              if (needInterstitial) {{
-                await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
+              if (!adOk && smartlink) {{
+                window.open(smartlink, '_blank');
+                await new Promise(r => setTimeout(r, 2500));
+                adOk = true;
               }}
 
-              if (needSmartlink) {{
-                status.textContent = 'Opening SmartLink...';
-                setProgress(75);
-                const opened = openSmartLink();
-                if (!opened) throw new Error('SmartLink unavailable');
-                await callApi('/api/verification/' + token + '/complete-smartlink', {{ smartlink_opened: true }});
-              }}
+              if (!adOk) throw new Error('Ad not completed');
 
+              status.textContent = 'Finalizing verification...';
+              setProgress(80);
+              await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
               setProgress(100);
               status.textContent = 'Verification complete. Redirecting...';
               window.location.href = '/complete/' + token;
@@ -268,7 +206,8 @@ async def verification_page(request: web.Request) -> web.Response:
 
           retry.onclick = () => {{ retry.style.display = 'none'; startFlow(); }};
           watchBtn.onclick = startFlow;
-          setProgress(20);
+
+          setProgress(Math.min(20, maxProgress));
         }})();
       </script>
     </body>
@@ -305,23 +244,12 @@ async def complete_ad(request: web.Request) -> web.Response:
     if not payload.get("ad_completed"):
         return web.json_response({"ok": False, "error": "ad_incomplete"}, status=400)
 
-    if "interstitial" in data.get("required_steps", []):
-        await complete_step(token, "interstitial")
-    return web.json_response({"ok": True})
-
-
-async def complete_smartlink(request: web.Request) -> web.Response:
-    token = request.match_info.get("token", "")
-    data = await get_token_or_none(token)
-    if not data:
-        return web.json_response({"ok": False, "error": "token_invalid"}, status=400)
-
-    payload = await request.json() if request.can_read_body else {}
-    if not payload.get("smartlink_opened"):
-        return web.json_response({"ok": False, "error": "smartlink_incomplete"}, status=400)
-
-    if "smartlink" in data.get("required_steps", []):
+    required = data.get("required_steps", [])
+    if "smartlink" in required:
         await complete_step(token, "smartlink")
+    if "interstitial" in required:
+        await complete_step(token, "interstitial")
+
     return web.json_response({"ok": True})
 
 
