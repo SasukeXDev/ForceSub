@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 
 from aiohttp import web
 
@@ -50,6 +51,9 @@ async def verification_page(request: web.Request) -> web.Response:
         )
     elif script_or_zone:
         interstitial_script_block = script_or_zone
+        match = re.search(r"data-sdk\s*=\s*['\"]([^'\"]+)['\"]", script_or_zone, flags=re.IGNORECASE)
+        if match:
+            interstitial_callable = match.group(1)
     else:
         interstitial_script_block = (
             "<script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>"
@@ -133,6 +137,7 @@ async def verification_page(request: web.Request) -> web.Response:
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
           const interstitialFnName = {interstitial_callable!r};
+          const interstitialCandidates = Array.from(new Set([interstitialFnName, 'show_10739699']));
           const needInterstitial = requiredSteps.includes('interstitial');
           const needSmartlink = requiredSteps.includes('smartlink');
           const watchBtn = document.getElementById('watchBtn');
@@ -189,20 +194,30 @@ async def verification_page(request: web.Request) -> web.Response:
           async function waitForInterstitialFn() {{
             const started = Date.now();
             while ((Date.now() - started) < 8000) {{
-              if (typeof window[interstitialFnName] === 'function') return window[interstitialFnName];
+              for (const fnName of interstitialCandidates) {{
+                if (typeof window[fnName] === 'function') return window[fnName];
+              }}
               await new Promise(r => setTimeout(r, 250));
             }}
             return null;
           }}
 
           async function playInterstitial() {{
-            let fn = window[interstitialFnName];
+            let fn = null;
+            for (const fnName of interstitialCandidates) {{
+              if (typeof window[fnName] === 'function') {{
+                fn = window[fnName];
+                break;
+              }}
+            }}
             if (typeof fn !== 'function') {{
               fn = await waitForInterstitialFn();
             }}
             if (typeof fn !== 'function') throw new Error('Interstitial SDK not ready');
 
-            const result = await fn();
+            const result = await fn({{
+              type: 'interstitial',
+            }});
             if (result === false) throw new Error('Interstitial was not shown');
             return true;
           }}
@@ -227,7 +242,9 @@ async def verification_page(request: web.Request) -> web.Response:
                 await playInterstitial();
               }}
 
-              await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
+              if (needInterstitial) {{
+                await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
+              }}
 
               if (needSmartlink) {{
                 status.textContent = 'Opening SmartLink...';
@@ -288,7 +305,8 @@ async def complete_ad(request: web.Request) -> web.Response:
     if not payload.get("ad_completed"):
         return web.json_response({"ok": False, "error": "ad_incomplete"}, status=400)
 
-    await complete_step(token, "interstitial")
+    if "interstitial" in data.get("required_steps", []):
+        await complete_step(token, "interstitial")
     return web.json_response({"ok": True})
 
 
@@ -302,7 +320,8 @@ async def complete_smartlink(request: web.Request) -> web.Response:
     if not payload.get("smartlink_opened"):
         return web.json_response({"ok": False, "error": "smartlink_incomplete"}, status=400)
 
-    await complete_step(token, "smartlink")
+    if "smartlink" in data.get("required_steps", []):
+        await complete_step(token, "smartlink")
     return web.json_response({"ok": True})
 
 

@@ -6,43 +6,53 @@ from config import ADMINS
 from ads_manager import set_ads_enabled, set_interstitial, set_mode, set_smartlink, status_text
 
 
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("enable_ads"))
+def _extract_command_value(message: Message) -> str:
+    text = (message.text or "").strip()
+    if " " not in text:
+        return ""
+    return text.split(" ", 1)[1].strip()
+
+
+@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command(["enable_ads", "ads_enable"]))
 async def enable_ads(_, message: Message):
     await set_ads_enabled(True)
     await message.reply_text("✅ Ads enabled globally.")
 
 
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("disable_ads"))
+@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command(["disable_ads", "ads_disable"]))
 async def disable_ads(_, message: Message):
     await set_ads_enabled(False)
     await message.reply_text("✅ Ads disabled globally.")
 
 
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("set_smartlink"))
+@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command(["set_smartlink", "smartlink"]))
 async def set_smartlink_cmd(_, message: Message):
-    if len(message.command) < 2:
+    value = _extract_command_value(message)
+    if not value:
         await message.reply_text("Usage: /set_smartlink <monetag-smartlink-url>")
         return
-    await set_smartlink(message.text.split(" ", 1)[1])
+    await set_smartlink(value)
     await message.reply_text("✅ SmartLink URL saved and SmartLink ad enabled.")
 
 
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("set_interstitial"))
+@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command(["set_interstitial", "set_interstitial_zone"]))
 async def set_interstitial_cmd(_, message: Message):
-    if len(message.command) < 2:
+    value = _extract_command_value(message)
+    if not value:
         await message.reply_text("Usage: /set_interstitial <zone-id-or-script>")
         return
-    await set_interstitial(message.text.split(" ", 1)[1])
+    await set_interstitial(value)
     await message.reply_text("✅ Interstitial config saved and Interstitial ad enabled.")
 
 
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("set_ad_mode"))
+@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command(["set_ad_mode", "ads_mode"]))
 async def set_ad_mode_cmd(_, message: Message):
-    if len(message.command) < 2:
+    value = _extract_command_value(message)
+    if not value:
         await message.reply_text("Usage: /set_ad_mode smartlink|interstitial|both")
         return
 
-    mode = message.command[1].strip().lower()
+    mode = value.lower()
     if mode not in {"smartlink", "interstitial", "both"}:
         await message.reply_text("❌ Invalid mode. Use: smartlink, interstitial, or both")
         return
@@ -51,6 +61,6 @@ async def set_ad_mode_cmd(_, message: Message):
     await message.reply_text(f"✅ Ad mode set to <code>{mode}</code>.")
 
 
-@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("ad_status"))
+@Bot.on_message(filters.private & filters.user(ADMINS) & filters.command(["ad_status", "ads_status"]))
 async def ad_status_cmd(_, message: Message):
     await message.reply_text(await status_text())
