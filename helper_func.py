@@ -43,6 +43,7 @@ async def get_messages(client, message_ids):
     total_messages = 0
     while total_messages != len(message_ids):
         temb_ids = message_ids[total_messages:total_messages+200]
+        msgs = []
         try:
             msgs = await client.get_messages(
                 chat_id=client.db_channel.id,
@@ -54,10 +55,13 @@ async def get_messages(client, message_ids):
                 chat_id=client.db_channel.id,
                 message_ids=temb_ids
             )
-        except:
-            pass
+        except Exception:
+            msgs = []
         total_messages += len(temb_ids)
-        messages.extend(msgs)
+        if isinstance(msgs, list):
+            messages.extend([m for m in msgs if m is not None])
+        elif msgs is not None:
+            messages.append(msgs)
     return messages
 
 async def get_message_id(client, message):

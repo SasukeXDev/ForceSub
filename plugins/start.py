@@ -3,7 +3,7 @@ import asyncio
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
 from bot import Bot
 from config import (
@@ -22,16 +22,25 @@ from verification_system import create_access_token, is_unlock_ready, mark_token
 
 
 async def _deliver_files(client: Client, message: Message, ids):
+    if not ids:
+        return False, "decoded_content_empty"
+
     temp_msg = await message.reply("Please wait...")
     try:
         messages = await get_messages(client, ids)
-    except Exception:
-        await message.reply_text("Something went wrong..! Please try again.")
-        return
+    except Exception as e:
+        await temp_msg.delete()
+        return False, f"fetch_failed: {e}"
 
     await temp_msg.delete()
+    if not messages:
+        return False, "content_not_found"
 
+    delivered = 0
+    last_error = None
     for msg in messages:
+        if not msg:
+            continue
         if bool(CUSTOM_CAPTION) and bool(msg.document):
             caption = CUSTOM_CAPTION.format(
                 previouscaption="" if not msg.caption else msg.caption.html,
@@ -50,31 +59,43 @@ async def _deliver_files(client: Client, message: Message, ids):
                 reply_markup=reply_markup,
                 protect_content=PROTECT_CONTENT,
             )
+            delivered += 1
             await asyncio.sleep(0.5)
         except FloodWait as e:
             await asyncio.sleep(e.x)
-            await msg.copy(
-                chat_id=message.from_user.id,
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup,
-                protect_content=PROTECT_CONTENT,
-            )
-        except Exception:
-            pass
+            try:
+                await msg.copy(
+                    chat_id=message.from_user.id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup,
+                    protect_content=PROTECT_CONTENT,
+                )
+                delivered += 1
+            except Exception as retry_error:
+                last_error = retry_error
+        except (UserIsBlocked, InputUserDeactivated) as user_error:
+            return False, str(user_error)
+        except Exception as copy_error:
+            last_error = copy_error
+
+    if delivered == 0:
+        return False, f"delivery_failed: {last_error}" if last_error else "delivery_failed"
+
+    return True, ""
 
 
 def _decode_ids(client: Client, encoded_string: str):
     argument = encoded_string.split("-")
     if len(argument) == 3:
-        start = int(int(argument[1]) / abs(client.db_channel.id))
-        end = int(int(argument[2]) / abs(client.db_channel.id))
+        start = int(argument[1]) // abs(client.db_channel.id)
+        end = int(argument[2]) // abs(client.db_channel.id)
         if start <= end:
             return list(range(start, end + 1))
         return list(range(start, end - 1, -1))
 
     if len(argument) == 2:
-        return [int(int(argument[1]) / abs(client.db_channel.id))]
+        return [int(argument[1]) // abs(client.db_channel.id)]
 
     return []
 
@@ -100,13 +121,20 @@ async def start_command(client: Client, message: Message):
                 return
 
             try:
-                decoded = await decode(token_data.get("base64_payload", ""))
+                payload = token_data.get("base64_payload", "")
+                if not payload:
+                    await message.reply_text("Error: Verification payload missing.")
+                    return
+                decoded = await decode(payload)
                 ids = _decode_ids(client, decoded)
             except Exception:
                 await message.reply_text("❌ Verification payload invalid. Please regenerate link.")
                 return
 
-            await _deliver_files(client, message, ids)
+            delivered, error = await _deliver_files(client, message, ids)
+            if not delivered:
+                await message.reply_text(f"Error: {error}")
+                return
             await mark_token_used(token)
             return
 
@@ -128,7 +156,7 @@ async def start_command(client: Client, message: Message):
 
         verify_url = f"{WEB_BASE_URL}/verify/{token}"
         kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✅ Verify & Continue", url=verify_url)]]
+            [[InlineKeyboardButton("✅ Verify & Continue", web_app=WebAppInfo(url=verify_url))]]
         )
         await message.reply_text(
             "Before receiving your file, complete Monetag verification.\n"

@@ -109,6 +109,83 @@ async def can_start_ad_attempt(token: str) -> Optional[Dict]:
     return await get_token_or_none(token)
 
 
+async def start_ad_session(token: str, user_id: Optional[int]) -> Optional[Dict]:
+    data = await get_token_or_none(token, user_id=user_id)
+    if not data:
+        return None
+
+    attempts = int(data.get("ad_attempts", 0))
+    if attempts >= MAX_AD_ATTEMPTS:
+        await update_verification_token(
+            token,
+            {"blocked": True, "blocked_reason": "too_many_attempts"},
+        )
+        return None
+
+    nonce = secrets.token_urlsafe(16)
+    patch = {
+        "ad_attempts": attempts + 1,
+        "ad_session_nonce": nonce,
+        "ad_started_at": datetime.utcnow(),
+        "current_step": "ad_started",
+    }
+    await update_verification_token(token, patch)
+    return await get_token_or_none(token)
+
+
+async def complete_ad_session(token: str, user_id: Optional[int], nonce: str) -> Optional[Dict]:
+    data = await get_token_or_none(token, user_id=user_id)
+    if not data:
+        return None
+
+    started_nonce = data.get("ad_session_nonce")
+    if not started_nonce or nonce != started_nonce:
+        return None
+
+    started_at = data.get("ad_started_at")
+    if not started_at or (datetime.utcnow() - started_at).total_seconds() < 2:
+        return None
+
+    required = data.get("required_steps", [])
+    completed = set(data.get("completed_steps", []))
+
+    if "interstitial" in required:
+        completed.add("interstitial")
+
+    await update_verification_token(
+        token,
+        {
+            "completed_steps": list(completed),
+            "ad_completed_at": datetime.utcnow(),
+            "ad_session_nonce": "",
+            "current_step": "ad_completed",
+        },
+    )
+    return await get_token_or_none(token, user_id=user_id)
+
+
+async def mark_smartlink_completed(token: str, user_id: Optional[int]) -> Optional[Dict]:
+    data = await get_token_or_none(token, user_id=user_id)
+    if not data:
+        return None
+
+    required = data.get("required_steps", [])
+    if "smartlink" not in required:
+        return data
+
+    completed = set(data.get("completed_steps", []))
+    completed.add("smartlink")
+    await update_verification_token(
+        token,
+        {
+            "completed_steps": list(completed),
+            "smartlink_completed_at": datetime.utcnow(),
+            "current_step": "smartlink_completed",
+        },
+    )
+    return await get_token_or_none(token, user_id=user_id)
+
+
 async def is_unlock_ready(token: str, user_id: int) -> Optional[Dict]:
     data = await get_token_or_none(token, user_id=user_id)
     if not data:
