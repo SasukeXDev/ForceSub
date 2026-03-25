@@ -43,7 +43,7 @@ async def verification_page(request: web.Request) -> web.Response:
     ad_ready_in = _seconds_until(data.get("ad_available_at", datetime.utcnow()))
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
-    interstitial_zone = str(settings.get("interstitial_script", "")).strip() or "10739699"
+    interstitial_zone = "10739699"
 
     html = f"""
     <!doctype html>
@@ -54,6 +54,7 @@ async def verification_page(request: web.Request) -> web.Response:
       <meta name='theme-color' content='#111827' />
       <title>File Verification Required</title>
       <script src='https://telegram.org/js/telegram-web-app.js'></script>
+      <script src='https://libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>
       <style>
         :root {{ --card-bg: rgba(255,255,255,.85); --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#7c3aed; }}
         @media (prefers-color-scheme: dark) {{
@@ -122,8 +123,7 @@ async def verification_page(request: web.Request) -> web.Response:
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
           const interstitialZone = {interstitial_zone!r};
-          const sdkSrc = 'https://libtl.com/sdk.js';
-          const adFnName = 'show_' + interstitialZone;
+          const adFnName = 'show_10739699';
           const interstitialBtn = document.getElementById('interstitialBtn');
           const smartlinkBtn = document.getElementById('smartlinkBtn');
           const count = document.getElementById('count');
@@ -176,27 +176,10 @@ async def verification_page(request: web.Request) -> web.Response:
           }}
 
           async function ensureSdkLoaded() {{
-            if (typeof window[adFnName] === 'function') {{
-              log('sdk already loaded');
-              return;
-            }}
-
-            let script = document.querySelector('script[data-verify-sdk="monetag"]');
-            if (!script) {{
-              script = document.createElement('script');
-              script.src = sdkSrc;
-              script.async = true;
-              script.defer = true;
-              script.setAttribute('data-zone', interstitialZone);
-              script.setAttribute('data-sdk', adFnName);
-              script.setAttribute('data-verify-sdk', 'monetag');
-              document.head.appendChild(script);
-            }}
-
-            log('waiting for sdk', {{ src: sdkSrc, zone: interstitialZone, fn: adFnName }});
+            log('sdk check start', {{ zone: interstitialZone, fn: adFnName }});
             await new Promise((resolve, reject) => {{
               const started = Date.now();
-              const maxWait = 10000;
+              const maxWait = 12000;
               (function poll() {{
                 if (typeof window[adFnName] === 'function') return resolve();
                 if (Date.now() - started > maxWait) return reject(new Error('sdk_load_timeout'));
@@ -204,6 +187,7 @@ async def verification_page(request: web.Request) -> web.Response:
               }})();
             }});
             log('sdk loaded');
+            log('ad function detected', adFnName);
           }}
 
           async function showInterstitialAd() {{
@@ -214,20 +198,24 @@ async def verification_page(request: web.Request) -> web.Response:
               type: 'inApp',
               inAppSettings: {{
                 frequency: 2,
-                capping: 0.1,
                 interval: 30,
-                timeout: 5,
-                everyPage: false
+                timeout: 5
               }}
             }});
 
-            let adResult = await runAd().catch(() => null);
+            let adResult = await runAd().catch((e) => {{
+              log('interstitial error', String(e));
+              return null;
+            }});
             if (!adResult) {{
               log('interstitial first call failed, retrying once');
-              adResult = await runAd().catch(() => null);
+              adResult = await runAd().catch((e) => {{
+                log('interstitial retry error', String(e));
+                return null;
+              }});
             }}
 
-            const adOk = !!adResult && adResult !== 'error';
+            const adOk = adResult !== false && adResult !== 'error' && adResult !== 'failed';
             log('interstitial call end', {{ ok: adOk, result: adResult }});
             if (!adOk) throw new Error('interstitial_failed');
             return true;
@@ -260,7 +248,16 @@ async def verification_page(request: web.Request) -> web.Response:
 
               if (step === 'interstitial') {{
                 status.textContent = 'Loading interstitial ad...';
-                await showInterstitialAd();
+                try {{
+                  await showInterstitialAd();
+                }} catch (adErr) {{
+                  log('interstitial fallback to smartlink', String(adErr));
+                  if (smartlink) {{
+                    openSmartLink();
+                    await new Promise(r => setTimeout(r, 2200));
+                  }}
+                  throw adErr;
+                }}
               }} else if (step === 'smartlink') {{
                 status.textContent = 'Opening SmartLink...';
                 openSmartLink();
