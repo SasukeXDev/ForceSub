@@ -44,6 +44,7 @@ async def verification_page(request: web.Request) -> web.Response:
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
     interstitial_zone = "10739699"
+    token_user_id = data.get("user_id")
 
     html = f"""
     <!doctype html>
@@ -122,6 +123,7 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
+          const tokenUserId = {token_user_id!r};
           const adFnName = 'show_10739699';
           const interstitialBtn = document.getElementById('interstitialBtn');
           const smartlinkBtn = document.getElementById('smartlinkBtn');
@@ -135,7 +137,7 @@ async def verification_page(request: web.Request) -> web.Response:
 
           let remaining = {ad_ready_in};
           let flowLocked = false;
-          let adVisibilitySignal = false;
+          let adPreloaded = false;
 
           function log(msg, data) {{
             if (data !== undefined) console.info('[verify]', msg, data);
@@ -144,17 +146,16 @@ async def verification_page(request: web.Request) -> web.Response:
           function setError(code) {{ status.textContent = 'Error: ' + code; }}
           function setProgress(pct) {{ bar.style.width = Math.max(5, Math.min(100, pct)) + '%'; }}
 
-          window.addEventListener('blur', () => {{ adVisibilitySignal = true; }});
-          document.addEventListener('visibilitychange', () => {{
-            if (document.visibilityState === 'hidden') adVisibilitySignal = true;
-          }});
-
           const timer = setInterval(() => {{
             if (remaining <= 0) {{
               clearInterval(timer);
-              interstitialBtn.disabled = false;
               interstitialBtn.textContent = 'Watch Ad & Continue';
-              status.textContent = 'Step 1 ready.';
+              if (adPreloaded) {{
+                interstitialBtn.disabled = false;
+                status.textContent = 'Step 1 ready.';
+              }} else {{
+                status.textContent = 'Preparing ad...';
+              }}
               return;
             }}
             remaining -= 1;
@@ -187,6 +188,23 @@ async def verification_page(request: web.Request) -> web.Response:
             throw new Error('sdk_not_loaded');
           }}
 
+          async function preloadAd() {{
+            await waitForSdk();
+            status.textContent = 'Loading ad unit...';
+            try {{
+              await window[adFnName]({{ type: 'preload', ymid: tokenUserId }});
+              adPreloaded = true;
+              log('Preload Success');
+              if (remaining <= 0) {{
+                interstitialBtn.disabled = false;
+                status.textContent = 'Step 1 ready.';
+              }}
+            }} catch (_) {{
+              log('Preload Failed');
+              throw new Error('ad_failed');
+            }}
+          }}
+
           function openSmartLink() {{
             if (!smartlink) throw new Error('direct_link_missing');
             if (tgWebApp && typeof tgWebApp.openLink === 'function') {{
@@ -196,47 +214,17 @@ async def verification_page(request: web.Request) -> web.Response:
             }}
           }}
 
-          function adResultOk(result) {{
-            if (!result) return false;
-            if (typeof result === 'string') return !['error', 'failed', 'closed'].includes(result.toLowerCase());
-            if (typeof result === 'object') {{
-              const s = String(result.status || result.state || '').toLowerCase();
-              return ['ok', 'success', 'completed', 'shown'].includes(s);
-            }}
-            return !!result;
-          }}
-
           async function runRewardedInterstitial() {{
             await waitForSdk();
-            await new Promise(r => setTimeout(r, 1200));
+            if (!adPreloaded) throw new Error('ad_failed');
             log('Ad Started');
-            adVisibilitySignal = false;
-            const startedAt = Date.now();
-
-            const runOnce = async () => {{
-              return await Promise.race([
-                Promise.resolve(window[adFnName]({{
-                  type: 'inApp',
-                  inAppSettings: {{ frequency: 2, interval: 30, timeout: 5 }}
-                }})),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('ad_timeout')), 15000))
-              ]);
-            }};
-
-            let result = null;
-            for (let i = 0; i < 2; i++) {{
-              result = await runOnce().catch(() => null);
-              if (adResultOk(result)) break;
-              log('Ad retry', {{ attempt: i + 1 }});
-            }}
-
-            const elapsed = Date.now() - startedAt;
-            const ok = adResultOk(result) || (adVisibilitySignal && elapsed >= 1500);
-            if (!ok) {{
-              log('Ad Failed', {{ result: result, visibility: adVisibilitySignal, elapsed: elapsed }});
+            try {{
+              await window[adFnName]({{ ymid: tokenUserId }});
+              log('Ad Completed');
+            }} catch (_) {{
+              log('Ad Failed');
               throw new Error('ad_failed');
             }}
-            log('Ad Completed', {{ elapsed: elapsed }});
           }}
 
           async function handleStep(step) {{
@@ -305,6 +293,10 @@ async def verification_page(request: web.Request) -> web.Response:
           interstitialBtn.onclick = () => startFlow('interstitial');
           smartlinkBtn.onclick = () => startFlow('smartlink');
           setProgress(Math.min(20, requiredSteps.length ? 100 : 0));
+          preloadAd().catch((e) => {{
+            setError(e.message || 'ad_failed');
+            showRetry('interstitial');
+          }});
         }})();
       </script>
     </body>
