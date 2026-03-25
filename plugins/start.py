@@ -22,6 +22,10 @@ from verification_system import create_access_token, is_unlock_ready, mark_token
 
 
 async def _deliver_files(client: Client, message: Message, ids):
+    if not ids:
+        await message.reply_text("No files were found in this link. Please generate a fresh link.")
+        return
+
     temp_msg = await message.reply("Please wait...")
     try:
         messages = await get_messages(client, ids)
@@ -30,7 +34,11 @@ async def _deliver_files(client: Client, message: Message, ids):
         return
 
     await temp_msg.delete()
+    if not messages:
+        await message.reply_text("I couldn't find those files in the database channel. Please regenerate the link.")
+        return
 
+    delivered = 0
     for msg in messages:
         if bool(CUSTOM_CAPTION) and bool(msg.document):
             caption = CUSTOM_CAPTION.format(
@@ -50,6 +58,7 @@ async def _deliver_files(client: Client, message: Message, ids):
                 reply_markup=reply_markup,
                 protect_content=PROTECT_CONTENT,
             )
+            delivered += 1
             await asyncio.sleep(0.5)
         except FloodWait as e:
             await asyncio.sleep(e.x)
@@ -60,8 +69,12 @@ async def _deliver_files(client: Client, message: Message, ids):
                 reply_markup=reply_markup,
                 protect_content=PROTECT_CONTENT,
             )
+            delivered += 1
         except Exception:
             pass
+
+    if delivered == 0:
+        await message.reply_text("Failed to deliver files. Check if source posts still exist and try a new link.")
 
 
 def _decode_ids(client: Client, encoded_string: str):
@@ -115,6 +128,9 @@ async def start_command(client: Client, message: Message):
             ids = _decode_ids(client, decoded)
         except Exception:
             await message.reply_text("Invalid or corrupted link.")
+            return
+        if not ids:
+            await message.reply_text("This link doesn't contain valid file IDs. Please create a new one.")
             return
 
         token = await create_access_token(user_id, arg)
