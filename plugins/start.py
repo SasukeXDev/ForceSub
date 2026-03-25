@@ -5,6 +5,11 @@ from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+try:
+    from pyrogram.types import WebAppInfo
+except Exception:  # pragma: no cover
+    WebAppInfo = None
+
 from bot import Bot
 from config import (
     ADMINS,
@@ -79,6 +84,14 @@ def _decode_ids(client: Client, encoded_string: str):
     return []
 
 
+def _build_verify_keyboard(verify_url: str) -> InlineKeyboardMarkup:
+    if WebAppInfo is None:
+        raise RuntimeError("Pyrogram version does not support WebAppInfo. Please install pyrogram>=2.")
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✅ Verify & Continue", web_app=WebAppInfo(url=verify_url))]]
+    )
+
+
 @Bot.on_message(filters.command("start") & filters.private & subscribed)
 async def start_command(client: Client, message: Message):
     user_id = message.from_user.id
@@ -126,16 +139,18 @@ async def start_command(client: Client, message: Message):
             await message.reply_text("⚠️ WEB_BASE_URL is not configured by admin. Unable to run ad verification.")
             return
 
-        verify_url = f"{WEB_BASE_URL}/verify/{token}"
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✅ Verify & Continue", web_app=WebAppInfo(url=verify_url))]]
-        )
-        await message.reply_text(
-            "Before receiving your file, complete Monetag verification.\n"
-            "Tap the button below and follow the steps.",
-            reply_markup=kb,
-            disable_web_page_preview=True,
-        )
+        try:
+            verify_url = f"{WEB_BASE_URL}/verify/{token}"
+            kb = _build_verify_keyboard(verify_url)
+            await message.reply_text(
+                "Before receiving your file, complete Monetag verification.\n"
+                "Step 1: Interstitial Ad\n"
+                "Step 2: Direct/SmartLink Ad",
+                reply_markup=kb,
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            await message.reply_text(f"Error: {e}")
         return
 
     reply_markup = InlineKeyboardMarkup(

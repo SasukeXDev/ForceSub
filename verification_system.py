@@ -14,6 +14,7 @@ TOKEN_TTL_MINUTES = 10
 AD_COOLDOWN_SECONDS = 15
 MAX_AD_ATTEMPTS = 2
 MAX_PAGE_VISITS = 8
+STEP_ORDER = ["interstitial", "smartlink"]
 
 
 async def create_access_token(user_id: int, base64_payload: str) -> Optional[str]:
@@ -21,16 +22,9 @@ async def create_access_token(user_id: int, base64_payload: str) -> Optional[str
     required_steps: List[str] = []
 
     if settings.get("ads_enabled"):
-        mode = settings.get("mode", "smartlink")
-        if mode == "smartlink" and settings.get("smartlink_enabled"):
-            required_steps = ["smartlink"]
-        elif mode == "interstitial" and settings.get("interstitial_enabled"):
-            required_steps = ["interstitial"]
-        elif mode == "both":
-            if settings.get("smartlink_enabled"):
-                required_steps.append("smartlink")
-            if settings.get("interstitial_enabled"):
-                required_steps.append("interstitial")
+        for step in STEP_ORDER:
+            if settings.get(f"{step}_enabled"):
+                required_steps.append(step)
 
     token = secrets.token_urlsafe(24)
     payload = {
@@ -75,6 +69,15 @@ async def complete_step(token: str, step: str) -> Optional[Dict]:
     completed.add(step)
     await update_verification_token(token, {"completed_steps": list(completed)})
     return await get_token_or_none(token)
+
+
+def get_next_required_step(data: Dict) -> Optional[str]:
+    required = data.get("required_steps", [])
+    completed = set(data.get("completed_steps", []))
+    for step in required:
+        if step not in completed:
+            return step
+    return None
 
 
 async def register_page_visit(token: str) -> Optional[Dict]:

@@ -7,6 +7,7 @@ from database.ads_database import get_ad_settings
 from verification_system import (
     can_start_ad_attempt,
     complete_step,
+    get_next_required_step,
     get_token_or_none,
     register_page_visit,
 )
@@ -39,6 +40,7 @@ async def verification_page(request: web.Request) -> web.Response:
     ad_ready_in = _seconds_until(data.get("ad_available_at", datetime.utcnow()))
     progress = int((len(data.get("completed_steps", [])) / max(1, len(required))) * 100)
     smartlink = settings.get("smartlink_url", "")
+    interstitial_zone = str(settings.get("interstitial_script", "")).strip() or "10739699"
 
     html = f"""
     <!doctype html>
@@ -49,7 +51,7 @@ async def verification_page(request: web.Request) -> web.Response:
       <meta name='theme-color' content='#111827' />
       <title>File Verification Required</title>
       <script src='https://telegram.org/js/telegram-web-app.js'></script>
-      <script src='//libtl.com/sdk.js' data-zone='10739699' data-sdk='show_10739699'></script>
+      <script src='//libtl.com/sdk.js' data-zone='{interstitial_zone}' data-sdk='show_{interstitial_zone}'></script>
       <style>
         :root {{ --card-bg: rgba(255,255,255,.85); --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#7c3aed; }}
         @media (prefers-color-scheme: dark) {{
@@ -96,13 +98,13 @@ async def verification_page(request: web.Request) -> web.Response:
 
         <div class='progress'><div id='bar' class='bar'></div></div>
         <ol class='steps'>
-          <li>Initialize verification</li>
-          <li>Load ad</li>
-          <li>Complete verification</li>
-          <li>Redirect to bot</li>
+          <li>Step 1: Interstitial ad</li>
+          <li>Step 2: Direct/SmartLink ad</li>
+          <li>Unlock content</li>
         </ol>
 
-        <button class='btn' id='watchBtn' disabled>Preparing verification… <span id='count'>{ad_ready_in}</span>s</button>
+        <button class='btn' id='interstitialBtn' disabled>Preparing Interstitial… <span id='count'>{ad_ready_in}</span>s</button>
+        <button class='btn' id='smartlinkBtn' style='margin-top:10px;opacity:.65;' disabled>Step 2: Open SmartLink</button>
         <div class='row'>
           <div class='status' id='status'>Waiting for cooldown...</div>
           <div class='badge'>Protected by secure verification</div>
@@ -117,7 +119,8 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
-          const watchBtn = document.getElementById('watchBtn');
+          const interstitialBtn = document.getElementById('interstitialBtn');
+          const smartlinkBtn = document.getElementById('smartlinkBtn');
           const count = document.getElementById('count');
           const status = document.getElementById('status');
           const retry = document.getElementById('retry');
@@ -135,9 +138,9 @@ async def verification_page(request: web.Request) -> web.Response:
           const timer = setInterval(() => {{
             if (remaining <= 0) {{
               clearInterval(timer);
-              watchBtn.disabled = false;
-              watchBtn.textContent = 'Watch Ad';
-              status.textContent = 'Ready to verify.';
+              interstitialBtn.disabled = false;
+              interstitialBtn.textContent = 'Step 1: Show Interstitial Ad';
+              status.textContent = 'Start Step 1 to continue.';
               return;
             }}
             remaining -= 1;
@@ -154,58 +157,75 @@ async def verification_page(request: web.Request) -> web.Response:
               headers: {{ 'Content-Type': 'application/json' }},
               body: JSON.stringify(payload || {{}})
             }});
-            if (!res.ok) throw new Error('Request failed');
-            return await res.json();
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error((data && data.error) ? data.error : 'request_failed');
+            return data;
           }}
 
-          async function startFlow() {{
+          async function startFlow(step) {{
             if (adStarted) return;
             adStarted = true;
-            watchBtn.disabled = true;
-            status.textContent = 'Starting verification...';
-            setProgress(25);
+            interstitialBtn.disabled = true;
+            smartlinkBtn.disabled = true;
+            status.textContent = 'Starting ' + step + '...';
+            setProgress(step === 'interstitial' ? 25 : 65);
 
             try {{
               const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
               await callApi('/api/verification/' + token + '/start-ad', {{
+                step: step,
                 tg_init_data: tg ? tg.initData : '',
                 tg_user_id: tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null
               }});
 
-              status.textContent = 'Loading ad...';
-              setProgress(50);
-
               let adOk = false;
-              if (typeof window.show_10739699 === 'function') {{
-                const adResult = await window.show_10739699();
-                adOk = !!adResult;
-              }}
-
-              if (!adOk && smartlink) {{
-                window.open(smartlink, '_blank');
-                await new Promise(r => setTimeout(r, 2500));
-                adOk = true;
+              if (step === 'interstitial') {{
+                status.textContent = 'Loading interstitial ad...';
+                const fnName = 'show_' + {interstitial_zone!r};
+                if (typeof window[fnName] === 'function') {{
+                  const adResult = await window[fnName]();
+                  adOk = !!adResult;
+                }}
+              }} else if (step === 'smartlink') {{
+                status.textContent = 'Opening SmartLink...';
+                if (smartlink) {{
+                  window.open(smartlink, '_blank');
+                  await new Promise(r => setTimeout(r, 2500));
+                  adOk = true;
+                }}
               }}
 
               if (!adOk) throw new Error('Ad not completed');
 
-              status.textContent = 'Finalizing verification...';
-              setProgress(80);
-              await callApi('/api/verification/' + token + '/complete-ad', {{ ad_completed: true }});
-              setProgress(100);
-              status.textContent = 'Verification complete. Redirecting...';
-              window.location.href = '/complete/' + token;
+              status.textContent = 'Finalizing ' + step + '...';
+              await callApi('/api/verification/' + token + '/complete-ad', {{ step: step, ad_completed: true }});
+
+              if (step === 'interstitial') {{
+                setProgress(60);
+                smartlinkBtn.disabled = false;
+                smartlinkBtn.style.opacity = '1';
+                status.textContent = 'Step 1 complete. Continue with Step 2.';
+              }} else {{
+                setProgress(100);
+                status.textContent = 'Verification complete. Redirecting...';
+                window.location.href = '/complete/' + token;
+              }}
             }} catch (err) {{
-              status.textContent = 'Verification failed. Please retry.';
+              status.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown_error');
               retry.style.display = 'block';
-              watchBtn.disabled = false;
-              watchBtn.textContent = 'Watch Ad';
+              interstitialBtn.disabled = false;
+              if (step === 'smartlink') {{
+                smartlinkBtn.disabled = false;
+              }}
               adStarted = false;
+              return;
             }}
+            adStarted = false;
           }}
 
-          retry.onclick = () => {{ retry.style.display = 'none'; startFlow(); }};
-          watchBtn.onclick = startFlow;
+          retry.onclick = () => {{ retry.style.display = 'none'; status.textContent = 'Retrying...'; }};
+          interstitialBtn.onclick = () => startFlow('interstitial');
+          smartlinkBtn.onclick = () => startFlow('smartlink');
 
           setProgress(Math.min(20, maxProgress));
         }})();
@@ -218,11 +238,19 @@ async def verification_page(request: web.Request) -> web.Response:
 
 async def start_ad(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
+    payload = await request.json() if request.can_read_body else {}
+    step = payload.get("step", "").strip().lower()
+    if step not in {"interstitial", "smartlink"}:
+        return web.json_response({"ok": False, "error": "invalid_step"}, status=400)
+
     data = await can_start_ad_attempt(token)
     if not data:
         return web.json_response({"ok": False, "error": "token_invalid_or_blocked"}, status=400)
 
-    payload = await request.json() if request.can_read_body else {}
+    next_step = get_next_required_step(data)
+    if next_step and step != next_step:
+        return web.json_response({"ok": False, "error": f"step_order_invalid_expected_{next_step}"}, status=409)
+
     tg_user_id = payload.get("tg_user_id")
     token_user_id = data.get("user_id")
     if tg_user_id and token_user_id and int(tg_user_id) != int(token_user_id):
@@ -231,7 +259,7 @@ async def start_ad(request: web.Request) -> web.Response:
     if _seconds_until(data.get("ad_available_at", datetime.utcnow())) > 0:
         return web.json_response({"ok": False, "error": "cooldown_not_ready"}, status=429)
 
-    return web.json_response({"ok": True, "attempts": data.get("ad_attempts", 0)})
+    return web.json_response({"ok": True, "attempts": data.get("ad_attempts", 0), "step": step})
 
 
 async def complete_ad(request: web.Request) -> web.Response:
@@ -241,14 +269,23 @@ async def complete_ad(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "token_invalid"}, status=400)
 
     payload = await request.json() if request.can_read_body else {}
+    step = payload.get("step", "").strip().lower()
+    if step not in {"interstitial", "smartlink"}:
+        return web.json_response({"ok": False, "error": "invalid_step"}, status=400)
     if not payload.get("ad_completed"):
         return web.json_response({"ok": False, "error": "ad_incomplete"}, status=400)
 
+    next_step = get_next_required_step(data)
+    if next_step and step != next_step:
+        return web.json_response({"ok": False, "error": f"step_order_invalid_expected_{next_step}"}, status=409)
+
     required = data.get("required_steps", [])
-    if "smartlink" in required:
-        await complete_step(token, "smartlink")
-    if "interstitial" in required:
-        await complete_step(token, "interstitial")
+    if step not in required:
+        return web.json_response({"ok": False, "error": "step_not_required"}, status=400)
+
+    updated = await complete_step(token, step)
+    if not updated:
+        return web.json_response({"ok": False, "error": "complete_step_failed"}, status=400)
 
     return web.json_response({"ok": True})
 
