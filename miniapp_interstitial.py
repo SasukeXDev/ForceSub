@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 
 from aiohttp import web
 
@@ -11,6 +12,8 @@ from verification_system import (
     get_token_or_none,
     register_page_visit,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _tg_open_link(path: str) -> str:
@@ -51,7 +54,6 @@ async def verification_page(request: web.Request) -> web.Response:
       <meta name='theme-color' content='#111827' />
       <title>File Verification Required</title>
       <script src='https://telegram.org/js/telegram-web-app.js'></script>
-      <script src='//libtl.com/sdk.js' data-zone='{interstitial_zone}' data-sdk='show_{interstitial_zone}'></script>
       <style>
         :root {{ --card-bg: rgba(255,255,255,.85); --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#7c3aed; }}
         @media (prefers-color-scheme: dark) {{
@@ -119,6 +121,9 @@ async def verification_page(request: web.Request) -> web.Response:
           const token = {token!r};
           const requiredSteps = {required!r};
           const smartlink = {smartlink!r};
+          const interstitialZone = {interstitial_zone!r};
+          const sdkSrc = 'https://libtl.com/sdk.js';
+          const adFnName = 'show_' + interstitialZone;
           const interstitialBtn = document.getElementById('interstitialBtn');
           const smartlinkBtn = document.getElementById('smartlinkBtn');
           const count = document.getElementById('count');
@@ -131,9 +136,15 @@ async def verification_page(request: web.Request) -> web.Response:
             Telegram.WebApp.ready();
             Telegram.WebApp.expand();
           }}
+          const tgWebApp = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
 
           let remaining = {ad_ready_in};
           let adStarted = false;
+
+          function log(msg, data) {{
+            if (data !== undefined) console.info('[verify]', msg, data);
+            else console.info('[verify]', msg);
+          }}
 
           const timer = setInterval(() => {{
             if (remaining <= 0) {{
@@ -152,14 +163,84 @@ async def verification_page(request: web.Request) -> web.Response:
           }}
 
           async function callApi(url, payload) {{
+            log('api request', {{ url: url, payload: payload }});
             const res = await fetch(url, {{
               method: 'POST',
               headers: {{ 'Content-Type': 'application/json' }},
               body: JSON.stringify(payload || {{}})
             }});
-            const data = await res.json();
+            const data = await res.json().catch(() => ({{ ok: false, error: 'invalid_json' }}));
+            log('api response', {{ url: url, status: res.status, body: data }});
             if (!res.ok || !data.ok) throw new Error((data && data.error) ? data.error : 'request_failed');
             return data;
+          }}
+
+          async function ensureSdkLoaded() {{
+            if (typeof window[adFnName] === 'function') {{
+              log('sdk already loaded');
+              return;
+            }}
+
+            let script = document.querySelector('script[data-verify-sdk="monetag"]');
+            if (!script) {{
+              script = document.createElement('script');
+              script.src = sdkSrc;
+              script.async = true;
+              script.defer = true;
+              script.setAttribute('data-zone', interstitialZone);
+              script.setAttribute('data-sdk', adFnName);
+              script.setAttribute('data-verify-sdk', 'monetag');
+              document.head.appendChild(script);
+            }}
+
+            log('waiting for sdk', {{ src: sdkSrc, zone: interstitialZone, fn: adFnName }});
+            await new Promise((resolve, reject) => {{
+              const started = Date.now();
+              const maxWait = 10000;
+              (function poll() {{
+                if (typeof window[adFnName] === 'function') return resolve();
+                if (Date.now() - started > maxWait) return reject(new Error('sdk_load_timeout'));
+                setTimeout(poll, 250);
+              }})();
+            }});
+            log('sdk loaded');
+          }}
+
+          async function showInterstitialAd() {{
+            await ensureSdkLoaded();
+            log('interstitial call start');
+
+            const runAd = async () => window[adFnName]({{
+              type: 'inApp',
+              inAppSettings: {{
+                frequency: 2,
+                capping: 0.1,
+                interval: 30,
+                timeout: 5,
+                everyPage: false
+              }}
+            }});
+
+            let adResult = await runAd().catch(() => null);
+            if (!adResult) {{
+              log('interstitial first call failed, retrying once');
+              adResult = await runAd().catch(() => null);
+            }}
+
+            const adOk = !!adResult && adResult !== 'error';
+            log('interstitial call end', {{ ok: adOk, result: adResult }});
+            if (!adOk) throw new Error('interstitial_failed');
+            return true;
+          }}
+
+          function openSmartLink() {{
+            if (!smartlink) throw new Error('smartlink_missing');
+            log('smartlink open');
+            if (tgWebApp && typeof tgWebApp.openLink === 'function') {{
+              tgWebApp.openLink(smartlink, {{ try_instant_view: false }});
+            }} else {{
+              window.open(smartlink, '_blank', 'noopener,noreferrer');
+            }}
           }}
 
           async function startFlow(step) {{
@@ -171,31 +252,20 @@ async def verification_page(request: web.Request) -> web.Response:
             setProgress(step === 'interstitial' ? 25 : 65);
 
             try {{
-              const tg = (window.Telegram && Telegram.WebApp) ? Telegram.WebApp : null;
               await callApi('/api/verification/' + token + '/start-ad', {{
                 step: step,
-                tg_init_data: tg ? tg.initData : '',
-                tg_user_id: tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : null
+                tg_init_data: tgWebApp ? tgWebApp.initData : '',
+                tg_user_id: tgWebApp && tgWebApp.initDataUnsafe && tgWebApp.initDataUnsafe.user ? tgWebApp.initDataUnsafe.user.id : null
               }});
 
-              let adOk = false;
               if (step === 'interstitial') {{
                 status.textContent = 'Loading interstitial ad...';
-                const fnName = 'show_' + {interstitial_zone!r};
-                if (typeof window[fnName] === 'function') {{
-                  const adResult = await window[fnName]();
-                  adOk = !!adResult;
-                }}
+                await showInterstitialAd();
               }} else if (step === 'smartlink') {{
                 status.textContent = 'Opening SmartLink...';
-                if (smartlink) {{
-                  window.open(smartlink, '_blank');
-                  await new Promise(r => setTimeout(r, 2500));
-                  adOk = true;
-                }}
+                openSmartLink();
+                await new Promise(r => setTimeout(r, 2200));
               }}
-
-              if (!adOk) throw new Error('Ad not completed');
 
               status.textContent = 'Finalizing ' + step + '...';
               await callApi('/api/verification/' + token + '/complete-ad', {{ step: step, ad_completed: true }});
@@ -212,6 +282,7 @@ async def verification_page(request: web.Request) -> web.Response:
               }}
             }} catch (err) {{
               status.textContent = 'Error: ' + (err && err.message ? err.message : 'unknown_error');
+              log('flow failed', {{ step: step, error: String(err && err.message ? err.message : err) }});
               retry.style.display = 'block';
               interstitialBtn.disabled = false;
               if (step === 'smartlink') {{
@@ -223,7 +294,10 @@ async def verification_page(request: web.Request) -> web.Response:
             adStarted = false;
           }}
 
-          retry.onclick = () => {{ retry.style.display = 'none'; status.textContent = 'Retrying...'; }};
+          retry.onclick = () => {{
+            retry.style.display = 'none';
+            status.textContent = 'Retrying...';
+          }};
           interstitialBtn.onclick = () => startFlow('interstitial');
           smartlinkBtn.onclick = () => startFlow('smartlink');
 
@@ -243,22 +317,28 @@ async def start_ad(request: web.Request) -> web.Response:
     if step not in {"interstitial", "smartlink"}:
         return web.json_response({"ok": False, "error": "invalid_step"}, status=400)
 
+    LOGGER.info("start-ad token=%s step=%s", token, step)
     data = await can_start_ad_attempt(token)
     if not data:
+        LOGGER.info("start-ad denied token=%s reason=token_invalid_or_blocked", token)
         return web.json_response({"ok": False, "error": "token_invalid_or_blocked"}, status=400)
 
     next_step = get_next_required_step(data)
     if next_step and step != next_step:
+        LOGGER.info("start-ad denied token=%s reason=wrong_step expected=%s got=%s", token, next_step, step)
         return web.json_response({"ok": False, "error": f"step_order_invalid_expected_{next_step}"}, status=409)
 
     tg_user_id = payload.get("tg_user_id")
     token_user_id = data.get("user_id")
     if tg_user_id and token_user_id and int(tg_user_id) != int(token_user_id):
+        LOGGER.info("start-ad denied token=%s reason=user_mismatch", token)
         return web.json_response({"ok": False, "error": "user_mismatch"}, status=403)
 
     if _seconds_until(data.get("ad_available_at", datetime.utcnow())) > 0:
+        LOGGER.info("start-ad denied token=%s reason=cooldown", token)
         return web.json_response({"ok": False, "error": "cooldown_not_ready"}, status=429)
 
+    LOGGER.info("start-ad ok token=%s step=%s attempts=%s", token, step, data.get("ad_attempts", 0))
     return web.json_response({"ok": True, "attempts": data.get("ad_attempts", 0), "step": step})
 
 
@@ -275,18 +355,23 @@ async def complete_ad(request: web.Request) -> web.Response:
     if not payload.get("ad_completed"):
         return web.json_response({"ok": False, "error": "ad_incomplete"}, status=400)
 
+    LOGGER.info("complete-ad token=%s step=%s", token, step)
     next_step = get_next_required_step(data)
     if next_step and step != next_step:
+        LOGGER.info("complete-ad denied token=%s reason=wrong_step expected=%s got=%s", token, next_step, step)
         return web.json_response({"ok": False, "error": f"step_order_invalid_expected_{next_step}"}, status=409)
 
     required = data.get("required_steps", [])
     if step not in required:
+        LOGGER.info("complete-ad denied token=%s reason=step_not_required step=%s", token, step)
         return web.json_response({"ok": False, "error": "step_not_required"}, status=400)
 
     updated = await complete_step(token, step)
     if not updated:
+        LOGGER.info("complete-ad denied token=%s reason=complete_step_failed", token)
         return web.json_response({"ok": False, "error": "complete_step_failed"}, status=400)
 
+    LOGGER.info("complete-ad ok token=%s step=%s", token, step)
     return web.json_response({"ok": True})
 
 
