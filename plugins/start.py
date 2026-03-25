@@ -128,7 +128,7 @@ async def start_command(client: Client, message: Message):
 
         verify_url = f"{WEB_BASE_URL}/verify/{token}"
         kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✅ Verify & Continue", url=verify_url)]]
+            [[InlineKeyboardButton("✅ Verify & Continue", web_app=WebAppInfo(url=verify_url))]]
         )
         await message.reply_text(
             "Before receiving your file, complete Monetag verification.\n"
