@@ -11,16 +11,32 @@ from config import DB_NAME, DB_URI
 LOGGER = logging.getLogger(__name__)
 
 
+def _mask_uri(uri: str) -> str:
+    if len(uri) < 18:
+        return "***"
+    return f"{uri[:14]}...{uri[-6:]}"
+
+
 class MultiMongoManager:
     """Async MongoDB pool with failover, retry, and runtime URI management."""
 
     def __init__(self) -> None:
-        env_list = os.getenv("MONGO_URIS", "")
-        seed_uris = [u.strip() for u in env_list.split(",") if u.strip()]
-        if DB_URI and DB_URI.strip() and DB_URI.strip() not in seed_uris:
+        seed_uris: List[str] = []
+
+        comma_uris = os.getenv("MONGO_URIS", "")
+        seed_uris.extend([u.strip() for u in comma_uris.split(",") if u.strip()])
+
+        indexed_keys = sorted(k for k in os.environ if k.startswith("MONGO_URI_"))
+        for key in indexed_keys:
+            val = os.getenv(key, "").strip()
+            if val:
+                seed_uris.append(val)
+
+        if DB_URI and DB_URI.strip():
             seed_uris.insert(0, DB_URI.strip())
 
-        self._uris: List[str] = seed_uris
+        # de-duplicate while preserving order
+        self._uris = list(dict.fromkeys(seed_uris))
         self._clients: Dict[str, AsyncIOMotorClient] = {}
         self._active_uri: Optional[str] = None
         self._init_lock = asyncio.Lock()
@@ -28,14 +44,19 @@ class MultiMongoManager:
     async def initialize(self, retries: int = 2) -> bool:
         async with self._init_lock:
             LOGGER.info("Connecting to MongoDB...")
+            if not self._uris:
+                LOGGER.error("All DB connections failed")
+                return False
+
             for attempt in range(retries + 1):
                 db = await self._select_available_db()
                 if db is not None:
-                    LOGGER.info("MongoDB Connected")
+                    LOGGER.info("Connected successfully")
                     return True
                 if attempt < retries:
                     await asyncio.sleep(1.2 * (attempt + 1))
-            LOGGER.error("DB is None ERROR")
+
+            LOGGER.error("All DB connections failed")
             return False
 
     async def ensure_database(self) -> AsyncIOMotorDatabase:
@@ -60,6 +81,7 @@ class MultiMongoManager:
             return None
 
     async def _is_alive(self, uri: str) -> bool:
+        LOGGER.info("Trying URI: %s", _mask_uri(uri))
         client = await self._build_client(uri)
         if client is None:
             return False
@@ -70,9 +92,11 @@ class MultiMongoManager:
             return False
 
     async def _select_available_db(self) -> Optional[AsyncIOMotorDatabase]:
+        # 1) try current active URI first
         if self._active_uri and await self._is_alive(self._active_uri):
             return self._clients[self._active_uri][DB_NAME]
 
+        # 2) fallback across full pool
         for uri in list(self._uris):
             if await self._is_alive(uri):
                 self._active_uri = uri
@@ -83,9 +107,8 @@ class MultiMongoManager:
 
     async def get_database(self) -> Optional[AsyncIOMotorDatabase]:
         db = await self._select_available_db()
-        if db is None and self._uris:
-            LOGGER.warning("Primary DB unavailable; trying fallback pool")
-            db = await self._select_available_db()
+        if db is None:
+            return None
         return db
 
     def list_uris(self) -> List[str]:
@@ -95,10 +118,8 @@ class MultiMongoManager:
         clean = (uri or "").strip()
         if not clean:
             return False
-
         if clean in self._uris:
             return True
-
         if not await self._is_alive(clean):
             return False
 
