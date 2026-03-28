@@ -28,6 +28,9 @@ OWNER_ID = int(os.environ.get("OWNER_ID", ""))
 #Port
 PORT = os.environ.get("PORT", "8080")
 
+# Main admin payout channel/group id
+PAYOUT_CHANNEL_ID = int(os.environ.get("PAYOUT_CHANNEL_ID", "0"))
+
 #Database 
 DB_URI = os.environ.get("DATABASE_URL", "")
 DB_NAME = os.environ.get("DATABASE_NAME", "filesharexbot")
@@ -36,6 +39,9 @@ DB_NAME = os.environ.get("DATABASE_NAME", "filesharexbot")
 FORCE_SUB_CHANNEL = int(os.environ.get("FORCE_SUB_CHANNEL", "0"))
 
 TG_BOT_WORKERS = int(os.environ.get("TG_BOT_WORKERS", "4"))
+
+#Public web URL where bot web server is reachable
+WEB_BASE_URL = os.environ.get("WEB_BASE_URL", "").rstrip("/")
 
 #start message
 START_MSG = os.environ.get("START_MESSAGE", "<b>Heyy there {first},\n\nɪ'ᴍ ​Ayanokoji​, ʏᴏᴜʀ ғʀɪᴇɴᴅʟʏ ʟɪɴᴋ ᴍᴀɴᴀɢᴇʀ ʙᴏᴛ.\nɪ'ᴍ ᴛʜᴇ ɢᴏ-ᴛᴏ ʙᴏᴛ ғᴏʀ ᴍᴀɴᴀɢɪɴɢ ᴀʟʟ ᴛʜᴇ ʟɪɴᴋs ɪɴ ᴛʜᴇ ᴜᴄʜɪʜᴀ ᴄᴏᴍᴍᴜɴɪᴛʏ.\n\nᴀɴᴅ ʏᴏᴜ ᴋɴᴏᴡ ᴡʜᴀᴛ's ᴄᴏᴏʟ? ɪ ᴡᴀs ᴄʀᴇᴀᴛᴇᴅ ʙʏ ᴛʜᴇ ᴏɴᴇ ᴀɴᴅ ᴏɴʟʏ ᴛʜᴇ ʟᴀsᴛ ᴄᴏᴅᴇʀ!</b>")

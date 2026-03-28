@@ -1,36 +1,31 @@
 #(©)CodeXBotz
 
+from database.multi_mongo import mongo_manager
 
 
-
-import pymongo, os
-from config import DB_URI, DB_NAME
-
-
-dbclient = pymongo.MongoClient(DB_URI)
-database = dbclient[DB_NAME]
+async def _get_users_collection():
+    db = await mongo_manager.ensure_database()
+    return db["users"]
 
 
-user_data = database['users']
+async def present_user(user_id: int):
+    user_data = await _get_users_collection()
+    return bool(await user_data.find_one({"_id": user_id}))
 
-
-
-async def present_user(user_id : int):
-    found = user_data.find_one({'_id': user_id})
-    return bool(found)
 
 async def add_user(user_id: int):
-    user_data.insert_one({'_id': user_id})
-    return
+    user_data = await _get_users_collection()
+    await user_data.update_one({"_id": user_id}, {"$setOnInsert": {"_id": user_id}}, upsert=True)
+
 
 async def full_userbase():
-    user_docs = user_data.find()
+    user_data = await _get_users_collection()
     user_ids = []
-    for doc in user_docs:
-        user_ids.append(doc['_id'])
-        
+    async for doc in user_data.find({}, {"_id": 1}):
+        user_ids.append(doc["_id"])
     return user_ids
 
+
 async def del_user(user_id: int):
-    user_data.delete_one({'_id': user_id})
-    return
+    user_data = await _get_users_collection()
+    await user_data.delete_one({"_id": user_id})
