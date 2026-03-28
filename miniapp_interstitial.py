@@ -12,6 +12,7 @@ from verification_system import (
     get_token_or_none,
     register_page_visit,
 )
+from database.saas_database import record_ad_completion
 
 LOGGER = logging.getLogger(__name__)
 
@@ -366,8 +367,32 @@ async def complete_ad(request: web.Request) -> web.Response:
         LOGGER.info("complete-ad denied token=%s reason=complete_step_failed", token)
         return web.json_response({"ok": False, "error": "complete_step_failed"}, status=400)
 
+    # Credit earnings strictly after ad completion success
+    credited = 0.0
+    owner_id = data.get("owner_id")
+    bot_token = data.get("bot_token")
+    if owner_id and bot_token:
+        country = request.headers.get("CF-IPCountry", "IN")
+        try:
+            credited = await record_ad_completion(
+                user_id=int(data.get("user_id")),
+                token=str(bot_token),
+                owner_id=int(owner_id),
+                ad_type=step,
+                country_code=country,
+            )
+            LOGGER.info(
+                "earning-credited user_id=%s bot=%s ad_type=%s earning=%s",
+                data.get("user_id"),
+                str(bot_token)[-8:],
+                step,
+                credited,
+            )
+        except Exception as e:
+            LOGGER.warning("earning-credit-failed token=%s err=%s", token, e)
+
     LOGGER.info("complete-ad ok token=%s step=%s", token, step)
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "earning": credited})
 
 
 async def smartlink_done(request: web.Request) -> web.Response:

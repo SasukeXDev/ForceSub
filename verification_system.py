@@ -17,7 +17,13 @@ MAX_PAGE_VISITS = 8
 STEP_ORDER = ["interstitial", "smartlink"]
 
 
-async def create_access_token(user_id: int, base64_payload: str) -> Optional[str]:
+async def create_access_token(
+    user_id: int,
+    base64_payload: str,
+    *,
+    bot_token: Optional[str] = None,
+    owner_id: Optional[int] = None,
+) -> Optional[str]:
     settings = await get_ad_settings()
     required_steps: List[str] = []
 
@@ -41,6 +47,8 @@ async def create_access_token(user_id: int, base64_payload: str) -> Optional[str
         "page_visits": 0,
         "blocked": False,
         "blocked_reason": "",
+        "bot_token": bot_token,
+        "owner_id": owner_id,
     }
     return await create_verification_token(payload)
 
