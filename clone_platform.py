@@ -8,8 +8,14 @@ import pyromod.listen  # noqa: F401
 from pyrogram import Client, filters
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+from pyrogram.errors import UserNotParticipant
 
-from config import API_HASH, APP_ID, ADMINS, CHANNEL_ID, PAYOUT_CHANNEL_ID
+try:
+    from pyrogram.types import WebAppInfo
+except Exception:  # pragma: no cover
+    WebAppInfo = None
+
+from config import API_HASH, APP_ID, ADMINS, CHANNEL_ID, PAYOUT_CHANNEL_ID, WEB_BASE_URL
 from database.saas_database import (
     add_bot_user,
     count_bot_users,
@@ -25,6 +31,7 @@ from database.saas_database import (
     update_bot_setting,
 )
 from helper_func import encode, decode
+from verification_system import create_access_token, is_unlock_ready, mark_token_used
 
 LOGGER = logging.getLogger(__name__)
 
@@ -139,23 +146,53 @@ class CloneRuntimeManager:
 
             if text.startswith("/start ") and len(text.split(" ", 1)) == 2:
                 arg = text.split(" ", 1)[1]
-                if not dump_channel_id:
-                    return await message.reply_text("⚠️ Dump channel is not configured for this bot.")
-                try:
-                    decoded = await decode(arg)
-                    parts = decoded.split("-")
-                    if len(parts) != 3 or parts[0] != "get":
-                        raise ValueError("invalid link payload")
-                    start_id, end_id = int(parts[1]), int(parts[2])
-                    step = 1 if start_id <= end_id else -1
-                    ids = list(range(start_id, end_id + step, step))
-                    messages = await client.get_messages(chat_id=int(dump_channel_id), message_ids=ids)
-                    for msg in messages:
-                        if msg:
-                            await msg.copy(chat_id=user_id, protect_content=False)
-                    return
-                except Exception as e:
-                    return await message.reply_text(f"Error: {e}")
+                if arg.startswith("unlock_"):
+                    token_key = arg.split("_", 1)[1]
+                    token_data = await is_unlock_ready(token_key, user_id)
+                    if not token_data:
+                        return await message.reply_text("❌ Verification invalid or expired. Re-open original link.")
+                    payload = token_data.get("base64_payload", "")
+                    try:
+                        decoded = await decode(payload)
+                    except Exception as e:
+                        return await message.reply_text(f"Error: {e}")
+                    if not dump_channel_id:
+                        return await message.reply_text("⚠️ Dump channel is not configured for this bot.")
+                    try:
+                        parts = decoded.split("-")
+                        if len(parts) != 3 or parts[0] != "get":
+                            raise ValueError("invalid link payload")
+                        start_id, end_id = int(parts[1]), int(parts[2])
+                        step = 1 if start_id <= end_id else -1
+                        ids = list(range(start_id, end_id + step, step))
+                        messages = await client.get_messages(chat_id=int(dump_channel_id), message_ids=ids)
+                        for msg in messages:
+                            if msg:
+                                await msg.copy(chat_id=user_id, protect_content=False)
+                        await mark_token_used(token_key)
+                        return
+                    except Exception as e:
+                        return await message.reply_text(f"Error: {e}")
+
+                access_token = await create_access_token(
+                    user_id=user_id,
+                    base64_payload=arg,
+                    bot_token=token,
+                    owner_id=owner_id,
+                )
+                if not access_token:
+                    return await message.reply_text("Error: Verification service unavailable.")
+                if not WEB_BASE_URL or WebAppInfo is None:
+                    return await message.reply_text("Error: WEB_BASE_URL not configured for verification flow.")
+                verify_url = f"{WEB_BASE_URL}/verify/{access_token}"
+                kb = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("✅ Verify & Continue", web_app=WebAppInfo(url=verify_url))]]
+                )
+                return await message.reply_text(
+                    "Complete verification in web app to unlock content.",
+                    reply_markup=kb,
+                    disable_web_page_preview=True,
+                )
 
             if text.startswith("/start"):
                 await add_bot_user(token, user_id)
@@ -165,13 +202,17 @@ class CloneRuntimeManager:
                         member = await client.get_chat_member(force_sub, user_id)
                         if getattr(member, "status", None) not in {"member", "administrator", "creator"}:
                             raise ValueError("not joined")
+                    except UserNotParticipant:
+                        return await message.reply_text("⚠️ Please join the required channel first, then /start again.")
                     except Exception:
                         return await message.reply_text("⚠️ Please join the required channel first, then /start again.")
                 welcome = settings.get("welcome", "Hi {first}, welcome!").format(first=message.from_user.first_name)
                 await message.reply_text(
                     welcome,
                     reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("ℹ️ Help", callback_data="clone:help")]]
+                        [[InlineKeyboardButton("📥 Get Link", callback_data="clone:getlink"), InlineKeyboardButton("📦 Batch", callback_data="clone:batch")],
+                         [InlineKeyboardButton("📢 Broadcast", callback_data="clone:broadcast"), InlineKeyboardButton("⚙️ Settings", callback_data="clone:settings")],
+                         [InlineKeyboardButton("ℹ️ Help", callback_data="clone:help")]]
                     ),
                 )
                 return
@@ -214,14 +255,28 @@ class CloneRuntimeManager:
                 if not raw:
                     return await message.reply_text("Error: No channel provided.")
                 try:
-                    channel_id = int(raw)
-                except Exception:
-                    return await message.reply_text("Error: Invalid channel id. Use a numeric id like -100123...")
+                    if raw.startswith("https://t.me/"):
+                        raw = "@" + raw.rsplit("/", 1)[-1]
+                    if raw.startswith("@"):
+                        channel = await client.get_chat(raw)
+                        channel_id = int(channel.id)
+                    else:
+                        channel_id = int(raw)
+                except Exception as e:
+                    return await message.reply_text(f"Error: Invalid channel id/username. {e}")
                 try:
-                    bot_member = await client.get_chat_member(channel_id, "me")
+                    me = await client.get_me()
+                    bot_member = await client.get_chat_member(channel_id, me.id)
+                    LOGGER.info(
+                        "set_dump token=%s channel_id=%s bot_member_status=%s",
+                        token[-8:],
+                        channel_id,
+                        getattr(bot_member, "status", "unknown"),
+                    )
                     if getattr(bot_member, "status", "") not in {"administrator", "creator"}:
                         return await message.reply_text("Error: Please make the bot admin in dump channel.")
                 except Exception as e:
+                    LOGGER.error("set_dump failed token=%s channel_id=%s err=%s", token[-8:], raw, e)
                     return await message.reply_text(f"Error: Cannot access channel. {e}")
                 ok = await update_bot_setting(token, owner_id, "db_channel_id", channel_id)
                 if not ok:
@@ -338,7 +393,8 @@ class CloneRuntimeManager:
                     try:
                         copied = await message.reply_to_message.copy(chat_id=int(dump_channel_id), disable_notification=True)
                         payload = await encode(f"get-{copied.id}-{copied.id}")
-                        return await message.reply_text(f"https://t.me/{client.me.username}?start={payload}")
+                        me = await client.get_me()
+                        return await message.reply_text(f"https://t.me/{me.username}?start={payload}")
                     except Exception as e:
                         return await message.reply_text(f"Error: {e}")
                 if text.startswith("/batch"):
@@ -349,7 +405,8 @@ class CloneRuntimeManager:
                         start_id = int(args[1])
                         end_id = int(args[2])
                         payload = await encode(f"get-{start_id}-{end_id}")
-                        return await message.reply_text(f"https://t.me/{client.me.username}?start={payload}")
+                        me = await client.get_me()
+                        return await message.reply_text(f"https://t.me/{me.username}?start={payload}")
                     except Exception as e:
                         return await message.reply_text(f"Error: {e}")
 
@@ -403,6 +460,43 @@ class CloneRuntimeManager:
 
         if query.data == "clone:help":
             await query.message.reply_text("Use /help to view available clone bot commands.")
+            return await query.answer()
+        if query.data == "clone:getlink":
+            await query.message.reply_text("Reply to any message with /getlink")
+            return await query.answer()
+        if query.data == "clone:batch":
+            await query.message.reply_text("Use: /batch <start_message_id> <end_message_id>")
+            return await query.answer()
+        if query.data == "clone:broadcast":
+            await query.message.reply_text("Reply to a message with /broadcast to send it to all clone users.")
+            return await query.answer()
+        if query.data == "clone:settings":
+            kb = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("🗂 Set Dump", callback_data="clone:settings:dump")],
+                    [InlineKeyboardButton("👋 Set Welcome", callback_data="clone:settings:welcome")],
+                    [InlineKeyboardButton("📢 Force Sub", callback_data="clone:settings:force_sub")],
+                    [InlineKeyboardButton("⬅️ Back", callback_data="clone:menu")],
+                ]
+            )
+            await query.message.reply_text("⚙️ Settings Menu", reply_markup=kb)
+            return await query.answer()
+        if query.data == "clone:menu":
+            kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("📥 Get Link", callback_data="clone:getlink"), InlineKeyboardButton("📦 Batch", callback_data="clone:batch")],
+                 [InlineKeyboardButton("📢 Broadcast", callback_data="clone:broadcast"), InlineKeyboardButton("⚙️ Settings", callback_data="clone:settings")],
+                 [InlineKeyboardButton("ℹ️ Help", callback_data="clone:help")]]
+            )
+            await query.message.reply_text("Main Menu", reply_markup=kb)
+            return await query.answer()
+        if query.data == "clone:settings:dump":
+            await query.message.reply_text("Use /set_dump and send channel id or forward channel message.")
+            return await query.answer()
+        if query.data == "clone:settings:welcome":
+            await query.message.reply_text("Use /set_welcome then send your welcome text.")
+            return await query.answer()
+        if query.data == "clone:settings:force_sub":
+            await query.message.reply_text("Use /set_force_sub then send force-sub channel id.")
             return await query.answer()
         await query.answer()
 
