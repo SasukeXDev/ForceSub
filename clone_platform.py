@@ -20,9 +20,11 @@ from database.saas_database import (
     owner_dashboard,
     save_clone_content,
     set_owner_custom_mongo,
+    list_bot_users,
     update_withdrawal_status,
     update_bot_setting,
 )
+from helper_func import encode, decode
 
 LOGGER = logging.getLogger(__name__)
 
@@ -129,13 +131,42 @@ class CloneRuntimeManager:
             token = client.clone_meta["token"]
             owner_id = client.clone_meta["owner_id"]
             text = message.text or ""
+            settings = await get_bot_settings(token)
+            dump_channel_id = settings.get("db_channel_id")
 
             if not self._allow_rate(token, user_id, "msg", 0.7):
                 return
 
+            if text.startswith("/start ") and len(text.split(" ", 1)) == 2:
+                arg = text.split(" ", 1)[1]
+                if not dump_channel_id:
+                    return await message.reply_text("⚠️ Dump channel is not configured for this bot.")
+                try:
+                    decoded = await decode(arg)
+                    parts = decoded.split("-")
+                    if len(parts) != 3 or parts[0] != "get":
+                        raise ValueError("invalid link payload")
+                    start_id, end_id = int(parts[1]), int(parts[2])
+                    step = 1 if start_id <= end_id else -1
+                    ids = list(range(start_id, end_id + step, step))
+                    messages = await client.get_messages(chat_id=int(dump_channel_id), message_ids=ids)
+                    for msg in messages:
+                        if msg:
+                            await msg.copy(chat_id=user_id, protect_content=False)
+                    return
+                except Exception as e:
+                    return await message.reply_text(f"Error: {e}")
+
             if text.startswith("/start"):
                 await add_bot_user(token, user_id)
-                settings = await get_bot_settings(token)
+                force_sub = settings.get("force_sub_channel")
+                if force_sub:
+                    try:
+                        member = await client.get_chat_member(force_sub, user_id)
+                        if getattr(member, "status", None) not in {"member", "administrator", "creator"}:
+                            raise ValueError("not joined")
+                    except Exception:
+                        return await message.reply_text("⚠️ Please join the required channel first, then /start again.")
                 welcome = settings.get("welcome", "Hi {first}, welcome!").format(first=message.from_user.first_name)
                 await message.reply_text(
                     welcome,
@@ -150,6 +181,10 @@ class CloneRuntimeManager:
                     "<b>Clone Bot Help</b>\n\n"
                     "• /start - Start the bot\n"
                     "• /help - Show commands\n"
+                    "• /set_dump - Set your dump channel\n"
+                    "• /getlink - Reply to content to generate a share link\n"
+                    "• /batch - Generate link for a message-id range\n"
+                    "• /broadcast - Owner broadcast to clone users\n"
                     "• /stats - View bot users count\n"
                     "• /dashboard - Owner earnings dashboard\n"
                     "• /users - Owner user count\n"
@@ -160,6 +195,38 @@ class CloneRuntimeManager:
                     "\nYou can also send media. It will be stored for analytics and copied to dump channel."
                 )
                 return
+
+            if text.startswith("/set_dump") or text.startswith("/set_db_channel"):
+                if user_id != owner_id:
+                    return
+                args = self._command_args(message)
+                if len(args) >= 2:
+                    raw = args[1].strip()
+                else:
+                    ask_msg = await client.ask(
+                        user_id,
+                        "Send dump channel ID (e.g. -100...) or forward any message from your dump channel.",
+                        timeout=180,
+                    )
+                    raw = (ask_msg.text or "").strip()
+                    if ask_msg.forward_from_chat:
+                        raw = str(ask_msg.forward_from_chat.id)
+                if not raw:
+                    return await message.reply_text("Error: No channel provided.")
+                try:
+                    channel_id = int(raw)
+                except Exception:
+                    return await message.reply_text("Error: Invalid channel id. Use a numeric id like -100123...")
+                try:
+                    bot_member = await client.get_chat_member(channel_id, "me")
+                    if getattr(bot_member, "status", "") not in {"administrator", "creator"}:
+                        return await message.reply_text("Error: Please make the bot admin in dump channel.")
+                except Exception as e:
+                    return await message.reply_text(f"Error: Cannot access channel. {e}")
+                ok = await update_bot_setting(token, owner_id, "db_channel_id", channel_id)
+                if not ok:
+                    return await message.reply_text("Error: Failed to save dump channel.")
+                return await message.reply_text(f"✅ Dump channel saved: <code>{channel_id}</code>")
 
             if text.startswith("/dashboard"):
                 if user_id != owner_id:
@@ -222,8 +289,15 @@ class CloneRuntimeManager:
                     return
                 args = self._command_args(message)
                 if len(args) < 2:
-                    return await message.reply_text(f"Usage: {cmd} <value>")
-                value = message.text.split(" ", 1)[1]
+                    prompt = "Send value:"
+                    if key == "force_sub_channel":
+                        prompt = "Send force-sub channel id (e.g. -100...):"
+                    asked = await client.ask(user_id, prompt, timeout=180)
+                    value = (asked.text or "").strip()
+                else:
+                    value = message.text.split(" ", 1)[1]
+                if not value:
+                    return await message.reply_text("Error: No value provided.")
                 ok = await update_bot_setting(token, owner_id, key, value)
                 return await message.reply_text("✅ Setting updated." if ok else "❌ Failed to update setting")
 
@@ -235,14 +309,50 @@ class CloneRuntimeManager:
             if text.startswith("/broadcast"):
                 if user_id != owner_id:
                     return
-                await message.reply_text("Reply-based /broadcast will be enabled in next update.")
-                return
+                users = await list_bot_users(token)
+                if not users:
+                    return await message.reply_text("⚠️ No users to broadcast.")
+                content = message.reply_to_message
+                if not content:
+                    asked = await client.ask(user_id, "Reply not found. Send broadcast text:", timeout=180)
+                    content = asked
+                sent = 0
+                for uid in users:
+                    try:
+                        await content.copy(uid)
+                        sent += 1
+                    except Exception:
+                        continue
+                return await message.reply_text(f"✅ Broadcast sent to {sent}/{len(users)} users.")
 
             if text.startswith("/batch") or text.startswith("/getlink"):
                 if user_id != owner_id:
                     return
-                await message.reply_text("Link tools are delegated to content module. Configure DB channel integration first.")
-                return
+                if not dump_channel_id:
+                    return await message.reply_text(
+                        "⚠️ Please set your dump channel using /set_dump before using this command."
+                    )
+                if text.startswith("/getlink"):
+                    if not message.reply_to_message:
+                        return await message.reply_text("Reply to a message with /getlink")
+                    try:
+                        copied = await message.reply_to_message.copy(chat_id=int(dump_channel_id), disable_notification=True)
+                        payload = await encode(f"get-{copied.id}-{copied.id}")
+                        return await message.reply_text(f"https://t.me/{client.me.username}?start={payload}")
+                    except Exception as e:
+                        return await message.reply_text(f"Error: {e}")
+                if text.startswith("/batch"):
+                    args = self._command_args(message)
+                    if len(args) < 3:
+                        return await message.reply_text("Usage: /batch <start_message_id> <end_message_id>")
+                    try:
+                        start_id = int(args[1])
+                        end_id = int(args[2])
+                        payload = await encode(f"get-{start_id}-{end_id}")
+                        return await message.reply_text(f"https://t.me/{client.me.username}?start={payload}")
+                    except Exception as e:
+                        return await message.reply_text(f"Error: {e}")
+
 
             media_type, file_id = self._extract_media_file(message)
             if file_id:

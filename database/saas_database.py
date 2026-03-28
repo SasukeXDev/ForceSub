@@ -51,6 +51,7 @@ async def create_clone_bot(owner_id: int, token: str, bot_username: str, custom_
                 "token": token,
                 "force_sub_channel": None,
                 "update_channel": None,
+                "db_channel_id": None,
                 "bot_text": "Welcome to your clone bot!",
                 "bot_photo": None,
                 "welcome": "Hi {first}, welcome!",
@@ -119,12 +120,18 @@ async def count_bot_users(token: str) -> int:
     return await db["bot_users"].count_documents({"token": token})
 
 
+async def list_bot_users(token: str):
+    db = await _db()
+    return [d["user_id"] async for d in db["bot_users"].find({"token": token}, {"user_id": 1})]
+
+
 async def get_bot_settings(token: str) -> Dict:
     db = await _db()
     doc = await db["bot_settings"].find_one({"token": token}) or {}
     return {
         "force_sub_channel": doc.get("force_sub_channel"),
         "update_channel": doc.get("update_channel"),
+        "db_channel_id": doc.get("db_channel_id"),
         "bot_text": doc.get("bot_text", "Welcome to your clone bot!"),
         "bot_photo": doc.get("bot_photo"),
         "welcome": doc.get("welcome", "Hi {first}, welcome!"),

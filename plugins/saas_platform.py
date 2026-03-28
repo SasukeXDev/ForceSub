@@ -5,7 +5,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 
 from bot import Bot
 from clone_platform import clone_runtime_manager
-from config import ADMINS
+from config import ADMINS, CHANNEL_ID
 from database.multi_mongo import mongo_manager
 from database.saas_database import (
     create_clone_bot,
@@ -48,9 +48,15 @@ async def create_bot_handler(client, message: Message):
         from config import APP_ID, API_HASH
 
         tmp = Client(name=f"validate_{owner_id}", api_id=APP_ID, api_hash=API_HASH, bot_token=token, in_memory=True)
+        clone_dump_admin_ok = False
         try:
             await tmp.start()
             me = await tmp.get_me()
+            try:
+                member = await tmp.get_chat_member(CHANNEL_ID, "me")
+                clone_dump_admin_ok = getattr(member, "status", "") in {"administrator", "creator"}
+            except Exception:
+                clone_dump_admin_ok = False
         finally:
             try:
                 await tmp.stop()
@@ -61,6 +67,20 @@ async def create_bot_handler(client, message: Message):
         await create_clone_bot(owner_id, token, (me.username or "").lower())
         LOGGER.info("clone bot saved owner=%s username=@%s", owner_id, me.username)
 
+        dump_warning = ""
+        if not clone_dump_admin_ok:
+            dump_warning = "\n⚠️ Please make the clone bot admin in main dump channel."
+
+        owner_invite_note = ""
+        try:
+            dump_chat = await client.get_chat(CHANNEL_ID)
+            link = dump_chat.invite_link
+            if not link:
+                link = await client.export_chat_invite_link(CHANNEL_ID)
+            owner_invite_note = f"\n🔗 Join dump channel: {link}"
+        except Exception:
+            owner_invite_note = "\n⚠️ Could not generate dump channel invite link."
+
         await progress.edit_text("🚀 Starting your clone bot...")
         ok = await clone_runtime_manager.start_clone(token)
         if not ok:
@@ -69,7 +89,8 @@ async def create_bot_handler(client, message: Message):
         await progress.edit_text(
             f"✅ Clone bot created: @{me.username}\n"
             "Available owner commands:\n"
-            "/dashboard /withdraw /set_force_sub /set_update_channel /set_bot_text /set_bot_photo /set_welcome"
+            "/set_dump /getlink /batch /broadcast /dashboard /withdraw /set_force_sub /set_update_channel /set_bot_text /set_bot_photo /set_welcome"
+            f"{dump_warning}{owner_invite_note}"
         )
     except Exception as e:
         LOGGER.error("clone bot create failed owner=%s err=%s", owner_id, e)
