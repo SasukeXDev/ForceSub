@@ -11,6 +11,7 @@ from datetime import datetime
 
 from config import API_HASH, APP_ID, LOGGER, TG_BOT_TOKEN, TG_BOT_WORKERS, FORCE_SUB_CHANNEL, CHANNEL_ID, PORT
 from clone_platform import clone_runtime_manager
+from database.multi_mongo import mongo_manager
 
 class Bot(Client):
     def __init__(self):
@@ -68,6 +69,10 @@ class Bot(Client):
 ░╚════╝░░╚════╝░╚═════╝░╚══════╝╚═╝░░╚═╝╚═════╝░░╚════╝░░░░╚═╝░░░╚══════╝
                                           """)
         self.username = usr_bot_me.username
+        db_ok = await mongo_manager.initialize()
+        if not db_ok:
+            self.LOGGER(__name__).error("Error: Database not initialized")
+            sys.exit()
         await clone_runtime_manager.start_all()
         #web-response
         web_app = await web_server()

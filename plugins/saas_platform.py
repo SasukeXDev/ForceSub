@@ -69,7 +69,7 @@ async def add_mongo_handler(_, message: Message):
     if len(message.command) < 2:
         return await message.reply_text("Usage: /add_mongo <mongodb-uri>")
     uri = message.text.split(" ", 1)[1].strip()
-    if not mongo_manager.add_uri(uri):
+    if not await mongo_manager.add_uri(uri):
         return await message.reply_text("❌ Failed to validate/add URI")
 
     merged = list(dict.fromkeys(mongo_manager.list_uris() + await load_mongo_uri_pool()))
@@ -82,7 +82,7 @@ async def remove_mongo_handler(_, message: Message):
     if len(message.command) < 2:
         return await message.reply_text("Usage: /remove_mongo <mongodb-uri>")
     uri = message.text.split(" ", 1)[1].strip()
-    ok = mongo_manager.remove_uri(uri)
+    ok = await mongo_manager.remove_uri(uri)
     uris = [u for u in await load_mongo_uri_pool() if u != uri]
     await save_mongo_uri_pool(uris)
     await message.reply_text("✅ Removed." if ok else "⚠️ URI was not present in runtime pool.")
