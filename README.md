@@ -1,172 +1,144 @@
-# Telegram SaaS Clone Bot Platform
+# ForceSub Telegram Bot
 
-Production-focused Telegram Bot platform where users can create their own clone bots, monetize ad traffic, and request withdrawals under a central admin system.
+An async **Pyrogram + MongoDB** bot project with:
+- file/link sharing flows,
+- ad/verification system,
+- admin controls,
+- and a **clone bot platform** where users can register their own bot token and run a clone instance.
 
 ---
 
-## 📦 Installation Steps
+## Features
 
-### 1) Clone project
+### Core bot
+- `/start` onboarding flow
+- force-subscription support
+- file/link generation and delivery
+- user tracking + broadcast
+- admin stats and controls
+
+### Clone bot platform
+- `/create_bot` (aliases: `/clone`, `/addbot`) to register clone bots
+- token validation through Telegram API
+- clone bot record persisted in MongoDB
+- clone bot runtime auto-start on main bot startup
+- owner commands (inside clone bot): dashboard, users, withdraw, settings
+
+### Stability and debugging
+- startup DB initialization guard
+- clone autostart fault isolation (one failure does not crash all)
+- explicit error messages in command handlers (`Error: <actual_error>`)
+- cleaner MongoDB connection logs (connected / switched / retry / failed)
+
+---
+
+## Quick Start
+
 ```bash
 git clone https://github.com/CodeXBotz/File-Sharing-Bot.git
 cd File-Sharing-Bot
-```
-
-### 2) Create virtual environment + install requirements
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 3) Configure environment variables
-Create a `.env` or export variables in your process manager.
-
-### 4) Run bot
-```bash
 python3 main.py
 ```
 
 ---
 
-## ⚙️ Configuration
+## Required Environment Variables
 
-Minimum required:
+| Variable | Description |
+|---|---|
+| `APP_ID` | Telegram API ID from my.telegram.org |
+| `API_HASH` | Telegram API hash |
+| `TG_BOT_TOKEN` | Main bot token from BotFather |
+| `OWNER_ID` | Telegram numeric user ID of owner |
+| `CHANNEL_ID` | DB/media channel id (e.g. `-100...`) |
+| `DATABASE_NAME` | Mongo database name |
 
-- `API_HASH` – Telegram API hash
-- `APP_ID` – Telegram app id
-- `TG_BOT_TOKEN` – main bot token
-- `OWNER_ID` – main owner telegram id
-- `CHANNEL_ID` – database channel id (`-100...`)
-- `DATABASE_NAME` – Mongo database name
+At least one Mongo URI source is required:
+- `DATABASE_URL` (single URI), or
+- `MONGO_URIS` (comma-separated pool), or
+- `MONGO_URI_1`, `MONGO_URI_2`, ... (indexed pool).
 
-Mongo connection options (any of these):
-
-- `DATABASE_URL` (primary Mongo URI)
-- `MONGO_URIS` (comma-separated URI pool)
-- `MONGO_URI_1`, `MONGO_URI_2`, `MONGO_URI_3`... (indexed URI pool)
-
-Optional:
-
-- `PAYOUT_CHANNEL_ID` – channel/group for withdrawal requests
-- `ADMINS` – extra admin ids (space separated)
-- `FORCE_SUB_CHANNEL`, `START_MESSAGE`, `FORCE_SUB_MESSAGE`, `WEB_BASE_URL`, etc.
-
----
-
-## ✅ MongoDB Setup Guide
-
-This project uses `motor` (`AsyncIOMotorClient`) with startup validation:
-
-1. On startup, the bot logs:
-   - `Connecting to MongoDB...`
-   - `Trying URI: ...`
-   - `Connected successfully`
-   - `All DB connections failed` (if no URI works)
-2. The bot pings MongoDB before serving features.
-3. If DB is not initialized, protected DB calls raise:
-   - `Error: Database not initialized`
-
-### Example env (single Mongo)
-```env
-DATABASE_URL=mongodb+srv://user:pass@cluster.mongodb.net
-DATABASE_NAME=filesharexbot
-```
-
-### Example env (multi Mongo pool)
-```env
-MONGO_URI_1=mongodb+srv://user:pass@cluster-a.mongodb.net
-MONGO_URI_2=mongodb+srv://user:pass@cluster-b.mongodb.net
-DATABASE_NAME=filesharexbot
-```
+Common optional vars:
+- `ADMINS`
+- `FORCE_SUB_CHANNEL`
+- `PAYOUT_CHANNEL_ID`
+- `WEB_BASE_URL`
+- `START_MESSAGE`, `FORCE_SUB_MESSAGE`, `START_PIC`
 
 ---
 
-## 🤖 Clone Bot System Overview
+## MongoDB Setup Guide
 
-Main bot commands:
+1. Create a MongoDB database user with read/write access to your target DB.
+2. Put the URI in `DATABASE_URL` (or URI pool env vars).
+3. Set `DATABASE_NAME`.
+4. Start the bot.
 
-- `/create_bot` – register a new clone bot via BotFather token
-- `/my_bots` – list your clone bots
+Expected connection logs:
+- `Connecting to MongoDB...`
+- `MongoDB connected (...)` or `MongoDB connected`
+- `MongoDB retrying connection (attempt x/y)` when temporary failures happen
+- `Database not connected: ...` if all configured URIs fail
 
-Clone owner commands (inside clone bot):
+If DB is unavailable, DB-protected calls raise:
+- `Error: Database not initialized`
 
+---
+
+## Commands
+
+### User commands (main bot)
+- `/start`
+- `/help`
+- `/create_bot` (aliases: `/clone`, `/addbot`)
+- `/my_bots`
+
+### Admin commands (main bot)
+- `/users`
+- `/broadcast` (reply mode)
+- `/batch`
+- `/genlink`
+- `/stats`
+- `/enable_ads`, `/disable_ads`, `/ad_status`
+- `/set_smartlink`, `/set_interstitial`, `/set_ad_mode`
+- `/all_bots`
+- `/add_mongo <uri>`
+- `/remove_mongo <uri>`
+- `/mongo_pool`
+
+### Clone owner commands (inside each clone bot)
 - `/dashboard`
+- `/users`
 - `/withdraw`
-- `/set_force_sub`
-- `/set_update_channel`
-- `/set_bot_text`
-- `/set_bot_photo`
-- `/set_welcome`
-
-Admin-only controls remain restricted from clone users.
-
----
-
-## 💰 Earnings System
-
-- Earnings are credited only after server-side ad completion success.
-- Per-event logs include:
-  - `user_id`
-  - `token` (bot identifier)
-  - `owner_id`
-  - `ad_type`
-  - `earning`
-  - `country_code`
-- `/dashboard` shows:
-  - total earnings
-  - today earnings
-  - total users
-  - total ad views
-  - available balance
+- `/set_force_sub <chat_id>`
+- `/set_update_channel <chat_id>`
+- `/set_bot_text <text>`
+- `/set_bot_photo <file_id|url>`
+- `/set_welcome <text>`
+- `/set_custom_db <mongodb-uri>`
 
 ---
 
-## 🧾 Withdrawal System
+## `/create_bot` Flow
 
-- Minimum withdrawal: `$0.5`
-- Owner submits amount + UPI via `/withdraw`
-- Balance is deducted on pending request
-- Admin can approve/reject
-- Reject flow refunds owner balance
-- Withdrawal records include owner, bot token, amount, status, timestamps
-
----
-
-## 🗄️ Multi MongoDB Support
-
-- URI pool sources:
-  - `DATABASE_URL`
-  - `MONGO_URIS`
-  - `MONGO_URI_1..N`
-- Startup + runtime fallback:
-  - tries active URI first
-  - auto-switches to next healthy URI if current fails
-- Admin commands:
-  - `/add_mongo <uri>`
-  - `/remove_mongo <uri>`
-  - `/mongo_pool`
+1. User sends `/create_bot`.
+2. Bot asks for BotFather token.
+3. Token format is validated.
+4. Token is validated via Telegram API (temporary bot client).
+5. Bot checks duplicate ownership rules:
+   - already active under same owner → informative response,
+   - registered by another owner → denied.
+6. Clone bot is saved to MongoDB.
+7. Clone runtime is started.
+8. User receives success/failure message.
 
 ---
 
-## 🚀 Deployment (Heroku / VPS)
+## Notes
 
-### Heroku
-- Set config vars in app settings
-- Ensure worker command runs `python main.py`
-- Add MongoDB URI(s) + Telegram vars
-
-### VPS (systemd/supervisor/pm2)
-- Install Python 3.10+
-- Configure env securely (not hardcoded)
-- Run as service and auto-restart on crash
-
----
-
-## Security Notes
-
-- Never commit bot tokens or Mongo credentials.
-- Restrict admin ids.
-- Use separate Mongo users with least privileges.
-- Prefer TLS SRV URIs (`mongodb+srv://`).
-
+- FloodWait handling in existing modules is preserved.
+- Keep bot tokens and Mongo URIs out of source control.
+- Use process manager/supervisor in production for restarts and log collection.

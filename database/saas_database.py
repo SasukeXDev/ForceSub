@@ -32,6 +32,7 @@ def _tier_multiplier(country_code: str) -> float:
 async def create_clone_bot(owner_id: int, token: str, bot_username: str, custom_mongo_uri: Optional[str] = None) -> Dict:
     db = await _db()
     bots = db["clone_bots"]
+    LOGGER.info("create_clone_bot owner=%s username=@%s", owner_id, bot_username)
     bot_doc = {
         "token": token,
         "owner_id": owner_id,
@@ -50,6 +51,7 @@ async def create_clone_bot(owner_id: int, token: str, bot_username: str, custom_
                 "token": token,
                 "force_sub_channel": None,
                 "update_channel": None,
+                "db_channel_id": None,
                 "bot_text": "Welcome to your clone bot!",
                 "bot_photo": None,
                 "welcome": "Hi {first}, welcome!",
@@ -58,6 +60,11 @@ async def create_clone_bot(owner_id: int, token: str, bot_username: str, custom_
         upsert=True,
     )
     return bot_doc
+
+
+async def get_clone_bot_any(token: str) -> Optional[Dict]:
+    db = await _db()
+    return await db["clone_bots"].find_one({"token": token})
 
 
 async def get_clone_bot(token: str) -> Optional[Dict]:
@@ -72,11 +79,6 @@ async def get_clone_bot_by_username(username: str) -> Optional[Dict]:
 
 async def list_clone_bots(active_only: bool = True):
     db = await _db()
-    if db is None:
-        LOGGER.error("DB is None ERROR")
-        raise Exception("Error: DB not connected")
-
-    LOGGER.info("Fetching clone bots...")
     query = {"active": True} if active_only else {}
     return [bot async for bot in db["clone_bots"].find(query)]
 
@@ -98,9 +100,29 @@ async def add_bot_user(token: str, user_id: int) -> None:
     )
 
 
+async def save_clone_content(token: str, owner_id: int, user_id: int, message_id: int, file_id: str, media_type: str) -> None:
+    db = await _db()
+    await db["clone_contents"].insert_one(
+        {
+            "token": token,
+            "owner_id": owner_id,
+            "user_id": user_id,
+            "message_id": message_id,
+            "file_id": file_id,
+            "media_type": media_type,
+            "created_at": datetime.utcnow(),
+        }
+    )
+
+
 async def count_bot_users(token: str) -> int:
     db = await _db()
     return await db["bot_users"].count_documents({"token": token})
+
+
+async def list_bot_users(token: str):
+    db = await _db()
+    return [d["user_id"] async for d in db["bot_users"].find({"token": token}, {"user_id": 1})]
 
 
 async def get_bot_settings(token: str) -> Dict:
@@ -109,6 +131,7 @@ async def get_bot_settings(token: str) -> Dict:
     return {
         "force_sub_channel": doc.get("force_sub_channel"),
         "update_channel": doc.get("update_channel"),
+        "db_channel_id": doc.get("db_channel_id"),
         "bot_text": doc.get("bot_text", "Welcome to your clone bot!"),
         "bot_photo": doc.get("bot_photo"),
         "welcome": doc.get("welcome", "Hi {first}, welcome!"),

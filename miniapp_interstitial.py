@@ -12,7 +12,7 @@ from verification_system import (
     get_token_or_none,
     register_page_visit,
 )
-from database.saas_database import record_ad_completion
+from database.saas_database import get_clone_bot, record_ad_completion
 
 LOGGER = logging.getLogger(__name__)
 
@@ -420,7 +420,16 @@ async def complete(request: web.Request) -> web.Response:
     data = await get_token_or_none(token)
     if not data:
         return web.Response(text="Token expired. Re-open your original bot link.", status=400)
-    deep_link = f"https://t.me/{request.app['bot_username']}?start=unlock_{token}"
+    deep_link_username = request.app["bot_username"]
+    clone_token = data.get("bot_token")
+    if clone_token:
+        try:
+            clone_doc = await get_clone_bot(str(clone_token))
+            if clone_doc and clone_doc.get("bot_username"):
+                deep_link_username = clone_doc["bot_username"]
+        except Exception as e:
+            LOGGER.warning("complete redirect clone lookup failed token=%s err=%s", token, e)
+    deep_link = f"https://t.me/{deep_link_username}?start=unlock_{token}"
     html = f"""
     <html><body style='font-family:sans-serif;padding:20px;'>
     <h3>Verification complete</h3>

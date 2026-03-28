@@ -40,29 +40,34 @@ class MultiMongoManager:
         self._clients: Dict[str, AsyncIOMotorClient] = {}
         self._active_uri: Optional[str] = None
         self._init_lock = asyncio.Lock()
+        self._has_logged_active_uri = False
 
     async def initialize(self, retries: int = 2) -> bool:
         async with self._init_lock:
             LOGGER.info("Connecting to MongoDB...")
             if not self._uris:
-                LOGGER.error("All DB connections failed")
+                LOGGER.error("Database not connected: no MongoDB URI configured")
                 return False
 
             for attempt in range(retries + 1):
                 db = await self._select_available_db()
                 if db is not None:
-                    LOGGER.info("Connected successfully")
+                    if self._active_uri:
+                        LOGGER.info("MongoDB connected (%s)", _mask_uri(self._active_uri))
+                    else:
+                        LOGGER.info("MongoDB connected")
                     return True
                 if attempt < retries:
+                    LOGGER.warning("MongoDB retrying connection (attempt %s/%s)", attempt + 1, retries + 1)
                     await asyncio.sleep(1.2 * (attempt + 1))
 
-            LOGGER.error("All DB connections failed")
+            LOGGER.error("Database not connected: all MongoDB connections failed")
             return False
 
     async def ensure_database(self) -> AsyncIOMotorDatabase:
         db = await self.get_database()
         if db is None:
-            LOGGER.error("DB is None ERROR")
+            LOGGER.error("Database not connected")
             raise Exception("Error: Database not initialized")
         return db
 
@@ -81,7 +86,6 @@ class MultiMongoManager:
             return None
 
     async def _is_alive(self, uri: str) -> bool:
-        LOGGER.info("Trying URI: %s", _mask_uri(uri))
         client = await self._build_client(uri)
         if client is None:
             return False
@@ -94,15 +98,21 @@ class MultiMongoManager:
     async def _select_available_db(self) -> Optional[AsyncIOMotorDatabase]:
         # 1) try current active URI first
         if self._active_uri and await self._is_alive(self._active_uri):
+            if not self._has_logged_active_uri:
+                LOGGER.info("Using MongoDB URI: %s", _mask_uri(self._active_uri))
+                self._has_logged_active_uri = True
             return self._clients[self._active_uri][DB_NAME]
 
         # 2) fallback across full pool
         for uri in list(self._uris):
             if await self._is_alive(uri):
                 self._active_uri = uri
+                LOGGER.info("Switched MongoDB URI: %s", _mask_uri(uri))
+                self._has_logged_active_uri = True
                 return self._clients[uri][DB_NAME]
 
         self._active_uri = None
+        self._has_logged_active_uri = False
         return None
 
     async def get_database(self) -> Optional[AsyncIOMotorDatabase]:
