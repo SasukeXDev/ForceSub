@@ -28,6 +28,9 @@ OWNER_ID = int(os.environ.get("OWNER_ID", ""))
 #Port
 PORT = os.environ.get("PORT", "8080")
 
+# Main admin payout channel/group id
+PAYOUT_CHANNEL_ID = int(os.environ.get("PAYOUT_CHANNEL_ID", "0"))
+
 #Database 
 DB_URI = os.environ.get("DATABASE_URL", "")
 DB_NAME = os.environ.get("DATABASE_NAME", "filesharexbot")
