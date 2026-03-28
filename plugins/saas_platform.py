@@ -19,6 +19,11 @@ from database.saas_database import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _cmd_args(message: Message):
+    cmd = message.command or []
+    return cmd if isinstance(cmd, list) else []
+
+
 @Bot.on_message(filters.private & filters.command(["create_bot", "clone", "addbot"]))
 async def create_bot_handler(client, message: Message):
     owner_id = message.from_user.id
@@ -99,13 +104,21 @@ async def help_handler(_, message: Message):
             "2) Send BotFather token\n"
             "3) Bot validates token, saves it, and starts your clone automatically."
         )
-        await message.reply_text(help_text)
+        await message.reply_text(
+            help_text,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("🤖 Create Bot", callback_data="main:create_bot"), InlineKeyboardButton("📁 My Bots", callback_data="main:my_bots")],
+                    [InlineKeyboardButton("ℹ️ Clone Help", callback_data="main:clone_help")],
+                ]
+            ),
+        )
     except Exception as e:
         LOGGER.error("help handler failed err=%s", e)
         await message.reply_text(f"Error: {e}")
 
 
-@Bot.on_message(filters.private & filters.command("my_bots"))
+@Bot.on_message(filters.private & filters.command(["my_bots", "mybots"]))
 async def my_bots_handler(_, message: Message):
     try:
         owner_id = message.from_user.id
@@ -120,6 +133,21 @@ async def my_bots_handler(_, message: Message):
         await message.reply_text(f"Error: {e}")
 
 
+@Bot.on_callback_query(filters.regex(r"^main:"))
+async def main_help_nav(_, query: CallbackQuery):
+    try:
+        if query.data == "main:create_bot":
+            await query.message.reply_text("Run /create_bot then send your BotFather token when asked.")
+        elif query.data == "main:my_bots":
+            await query.message.reply_text("Run /my_bots to view all active clone bots under your account.")
+        elif query.data == "main:clone_help":
+            await query.message.reply_text("Inside your clone bot, use /help to see owner and user commands.")
+        await query.answer()
+    except Exception as e:
+        LOGGER.error("main help nav error=%s", e)
+        await query.answer(f"Error: {e}", show_alert=True)
+
+
 @Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("all_bots"))
 async def all_bots_handler(_, message: Message):
     bots = await list_clone_bots(active_only=True)
@@ -128,7 +156,8 @@ async def all_bots_handler(_, message: Message):
 
 @Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("add_mongo"))
 async def add_mongo_handler(_, message: Message):
-    if len(message.command) < 2:
+    args = _cmd_args(message)
+    if len(args) < 2:
         return await message.reply_text("Usage: /add_mongo <mongodb-uri>")
     uri = message.text.split(" ", 1)[1].strip()
     if not await mongo_manager.add_uri(uri):
@@ -141,7 +170,8 @@ async def add_mongo_handler(_, message: Message):
 
 @Bot.on_message(filters.private & filters.user(ADMINS) & filters.command("remove_mongo"))
 async def remove_mongo_handler(_, message: Message):
-    if len(message.command) < 2:
+    args = _cmd_args(message)
+    if len(args) < 2:
         return await message.reply_text("Usage: /remove_mongo <mongodb-uri>")
     uri = message.text.split(" ", 1)[1].strip()
     ok = await mongo_manager.remove_uri(uri)

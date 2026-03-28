@@ -67,7 +67,7 @@ class MultiMongoManager:
     async def ensure_database(self) -> AsyncIOMotorDatabase:
         db = await self.get_database()
         if db is None:
-            LOGGER.error("DB is None ERROR")
+            LOGGER.error("Database not connected")
             raise Exception("Error: Database not initialized")
         return db
 

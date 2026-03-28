@@ -9,7 +9,7 @@ from pyrogram import Client, filters
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 
-from config import API_HASH, APP_ID, ADMINS, PAYOUT_CHANNEL_ID
+from config import API_HASH, APP_ID, ADMINS, CHANNEL_ID, PAYOUT_CHANNEL_ID
 from database.saas_database import (
     add_bot_user,
     count_bot_users,
@@ -18,7 +18,9 @@ from database.saas_database import (
     get_clone_bot,
     list_clone_bots,
     owner_dashboard,
+    save_clone_content,
     set_owner_custom_mongo,
+    update_withdrawal_status,
     update_bot_setting,
 )
 
@@ -29,6 +31,27 @@ class CloneRuntimeManager:
     def __init__(self):
         self.clients: Dict[str, Client] = {}
         self._rate_limits = defaultdict(dict)
+
+    @staticmethod
+    def _command_args(message: Message):
+        cmd = message.command or []
+        return cmd if isinstance(cmd, list) else []
+
+    @staticmethod
+    def _extract_media_file(message: Message):
+        if message.document:
+            return "document", message.document.file_id
+        if message.photo:
+            return "photo", message.photo.file_id
+        if message.video:
+            return "video", message.video.file_id
+        if message.audio:
+            return "audio", message.audio.file_id
+        if message.voice:
+            return "voice", message.voice.file_id
+        if message.sticker:
+            return "sticker", message.sticker.file_id
+        return None, None
 
     async def start_all(self):
         try:
@@ -84,6 +107,7 @@ class CloneRuntimeManager:
             await self._on_callback(client, query)
 
         app.add_handler(CallbackQueryHandler(callback_handler, filters.regex(r"^wd:(approve|reject):")))
+        app.add_handler(CallbackQueryHandler(callback_handler, filters.regex(r"^clone:")))
 
         try:
             await app.start()
@@ -113,7 +137,28 @@ class CloneRuntimeManager:
                 await add_bot_user(token, user_id)
                 settings = await get_bot_settings(token)
                 welcome = settings.get("welcome", "Hi {first}, welcome!").format(first=message.from_user.first_name)
-                await message.reply_text(welcome)
+                await message.reply_text(
+                    welcome,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("ℹ️ Help", callback_data="clone:help")]]
+                    ),
+                )
+                return
+
+            if text.startswith("/help"):
+                await message.reply_text(
+                    "<b>Clone Bot Help</b>\n\n"
+                    "• /start - Start the bot\n"
+                    "• /help - Show commands\n"
+                    "• /stats - View bot users count\n"
+                    "• /dashboard - Owner earnings dashboard\n"
+                    "• /users - Owner user count\n"
+                    "• /withdraw - Owner withdrawal request\n"
+                    "• /set_welcome <text> - Owner welcome text\n"
+                    "• /set_force_sub <chat_id> - Owner force-sub setup\n"
+                    "• /set_update_channel <chat_id> - Owner update channel setup\n"
+                    "\nYou can also send media. It will be stored for analytics and copied to dump channel."
+                )
                 return
 
             if text.startswith("/dashboard"):
@@ -157,7 +202,8 @@ class CloneRuntimeManager:
             if text.startswith("/set_custom_db"):
                 if user_id != owner_id:
                     return
-                if len(message.command) < 2:
+                args = self._command_args(message)
+                if len(args) < 2:
                     return await message.reply_text("Usage: /set_custom_db <mongodb-uri>")
                 ok = await set_owner_custom_mongo(token, owner_id, message.text.split(" ", 1)[1])
                 return await message.reply_text("✅ Custom MongoDB linked." if ok else "❌ Failed to set custom DB")
@@ -174,7 +220,8 @@ class CloneRuntimeManager:
                     continue
                 if user_id != owner_id:
                     return
-                if len(message.command) < 2:
+                args = self._command_args(message)
+                if len(args) < 2:
                     return await message.reply_text(f"Usage: {cmd} <value>")
                 value = message.text.split(" ", 1)[1]
                 ok = await update_bot_setting(token, owner_id, key, value)
@@ -196,12 +243,58 @@ class CloneRuntimeManager:
                     return
                 await message.reply_text("Link tools are delegated to content module. Configure DB channel integration first.")
                 return
+
+            media_type, file_id = self._extract_media_file(message)
+            if file_id:
+                await save_clone_content(
+                    token=token,
+                    owner_id=owner_id,
+                    user_id=user_id,
+                    message_id=message.id,
+                    file_id=file_id,
+                    media_type=media_type or "unknown",
+                )
+                try:
+                    await message.copy(chat_id=CHANNEL_ID, disable_notification=True)
+                except Exception as dump_error:
+                    LOGGER.warning("clone content dump failed token=%s err=%s", token[-8:], dump_error)
+                await message.reply_text("✅ Content saved.")
+                return
         except Exception as e:
             LOGGER.error("clone dispatch error token=%s err=%s", str(client.clone_meta.get("token", ""))[-8:], e)
             try:
                 await message.reply_text(f"Error: {e}")
             except Exception:
                 return
+
+    async def _on_callback(self, client: Client, query: CallbackQuery):
+        if query.data.startswith("wd:"):
+            if not query.from_user or query.from_user.id not in ADMINS:
+                return await query.answer("Admin only", show_alert=True)
+            _, action, withdrawal_id = query.data.split(":", 2)
+            status = "approved" if action == "approve" else "rejected"
+            req = await update_withdrawal_status(withdrawal_id, status, query.from_user.id)
+            if not req:
+                return await query.answer("Invalid request", show_alert=True)
+            await query.message.edit_text(
+                f"{'✅ Withdrawn' if status == 'approved' else '❌ Rejected'}\n"
+                f"Owner: <code>{req['owner_id']}</code>\n"
+                f"Amount: <code>${req['amount']}</code>"
+            )
+            try:
+                await client.send_message(
+                    req["owner_id"],
+                    f"Withdrawal update for bot token suffix {str(req['token'])[-8:]}:\n"
+                    f"Status: {'✅ Withdrawn' if status == 'approved' else '❌ Rejected (Refunded)'}",
+                )
+            except Exception as notify_err:
+                LOGGER.warning("unable to notify withdrawal owner=%s err=%s", req.get("owner_id"), notify_err)
+            return await query.answer("Updated")
+
+        if query.data == "clone:help":
+            await query.message.reply_text("Use /help to view available clone bot commands.")
+            return await query.answer()
+        await query.answer()
 
     async def _notify_admin_withdrawal(self, req: Dict):
         if not self.clients:

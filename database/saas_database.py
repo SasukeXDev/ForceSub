@@ -99,6 +99,21 @@ async def add_bot_user(token: str, user_id: int) -> None:
     )
 
 
+async def save_clone_content(token: str, owner_id: int, user_id: int, message_id: int, file_id: str, media_type: str) -> None:
+    db = await _db()
+    await db["clone_contents"].insert_one(
+        {
+            "token": token,
+            "owner_id": owner_id,
+            "user_id": user_id,
+            "message_id": message_id,
+            "file_id": file_id,
+            "media_type": media_type,
+            "created_at": datetime.utcnow(),
+        }
+    )
+
+
 async def count_bot_users(token: str) -> int:
     db = await _db()
     return await db["bot_users"].count_documents({"token": token})
