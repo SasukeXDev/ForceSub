@@ -71,18 +71,27 @@ class Bot(Client):
         self.username = usr_bot_me.username
         db_ok = await mongo_manager.initialize()
         if not db_ok:
-            self.LOGGER(__name__).error("Error: Database not initialized")
+            self.LOGGER(__name__).error("Database not connected")
             sys.exit()
-        await clone_runtime_manager.start_all()
+        try:
+            await clone_runtime_manager.start_all()
+        except Exception as e:
+            self.LOGGER(__name__).error("Clone startup error: %s", e)
         #web-response
         web_app = await web_server()
         web_app["bot_username"] = self.username
         app = web.AppRunner(web_app)
-        await app.setup()
-        bind_address = "0.0.0.0"
-        await web.TCPSite(app, bind_address, PORT).start()
+        try:
+            await app.setup()
+            bind_address = "0.0.0.0"
+            await web.TCPSite(app, bind_address, PORT).start()
+        except Exception as e:
+            self.LOGGER(__name__).error("Web server startup error: %s", e)
 
     async def stop(self, *args):
-        await clone_runtime_manager.stop_all()
+        try:
+            await clone_runtime_manager.stop_all()
+        except Exception as e:
+            self.LOGGER(__name__).error("Clone shutdown error: %s", e)
         await super().stop()
         self.LOGGER(__name__).info("Bot stopped.")

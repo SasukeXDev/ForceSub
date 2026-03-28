@@ -31,8 +31,20 @@ class CloneRuntimeManager:
         self._rate_limits = defaultdict(dict)
 
     async def start_all(self):
-        for bot in await list_clone_bots(active_only=True):
-            await self.start_clone(bot["token"])
+        try:
+            bots = await list_clone_bots(active_only=True)
+        except Exception as e:
+            LOGGER.error("failed to fetch clone bots on startup err=%s", e)
+            return
+
+        for bot in bots:
+            token = bot.get("token")
+            if not token:
+                continue
+            try:
+                await self.start_clone(token)
+            except Exception as e:
+                LOGGER.error("clone autostart failed token=%s err=%s", str(token)[-8:], e)
 
     async def stop_all(self):
         for token, client in list(self.clients.items()):
@@ -45,7 +57,11 @@ class CloneRuntimeManager:
         if token in self.clients:
             return True
 
-        bot = await get_clone_bot(token)
+        try:
+            bot = await get_clone_bot(token)
+        except Exception as e:
+            LOGGER.error("clone fetch failed token=%s err=%s", token[-8:], e)
+            return False
         if not bot:
             return False
 

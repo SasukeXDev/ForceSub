@@ -18,12 +18,14 @@ from database.saas_database import (
 LOGGER = logging.getLogger(__name__)
 
 
-@Bot.on_message(filters.private & filters.command("create_bot"))
+@Bot.on_message(filters.private & filters.command(["create_bot", "clone", "addbot"]))
 async def create_bot_handler(client, message: Message):
     owner_id = message.from_user.id
     try:
         token_msg = await client.ask(owner_id, "Send your @BotFather token:", timeout=180)
-        token = token_msg.text.strip()
+        token = (token_msg.text or "").strip()
+        if ":" not in token:
+            return await message.reply_text("❌ Invalid token format. Token must look like <id>:<secret>.")
 
         # Validate token by starting temporary client
         from pyrogram import Client
@@ -45,7 +47,37 @@ async def create_bot_handler(client, message: Message):
             "/dashboard /withdraw /set_force_sub /set_update_channel /set_bot_text /set_bot_photo /set_welcome"
         )
     except Exception as e:
+        LOGGER.error("clone bot create failed owner=%s err=%s", owner_id, e)
+        if "Database not initialized" in str(e):
+            return await message.reply_text("❌ Database not connected. Please try again later.")
         await message.reply_text(f"Error: {e}")
+
+
+@Bot.on_message(filters.private & filters.command("help"))
+async def help_handler(_, message: Message):
+    help_text = (
+        "<b>🤖 Bot Help</b>\n\n"
+        "<b>Main Commands</b>\n"
+        "• /start - Start bot\n"
+        "• /help - Show this guide\n\n"
+        "<b>Clone Bot Commands</b>\n"
+        "• /clone or /addbot - Create a clone bot from BotFather token\n"
+        "• /my_bots - List your clone bots\n\n"
+        "<b>Clone Owner Commands</b>\n"
+        "• /dashboard - Earnings + usage stats\n"
+        "• /users - Total users in your clone bot\n"
+        "• /withdraw - Request payout\n"
+        "• /set_welcome <text> - Set clone welcome message\n"
+        "• /set_force_sub <chat_id> - Set force-sub channel\n"
+        "• /set_update_channel <chat_id> - Set updates channel\n"
+        "• /set_bot_text <text> - Set bot text\n"
+        "• /set_bot_photo <file_id/url> - Set bot photo\n\n"
+        "<b>How to create a clone bot</b>\n"
+        "1) Run /clone\n"
+        "2) Send BotFather token\n"
+        "3) Bot validates token, saves it, and starts your clone automatically."
+    )
+    await message.reply_text(help_text)
 
 
 @Bot.on_message(filters.private & filters.command("my_bots"))

@@ -72,11 +72,6 @@ async def get_clone_bot_by_username(username: str) -> Optional[Dict]:
 
 async def list_clone_bots(active_only: bool = True):
     db = await _db()
-    if db is None:
-        LOGGER.error("DB is None ERROR")
-        raise Exception("Error: DB not connected")
-
-    LOGGER.info("Fetching clone bots...")
     query = {"active": True} if active_only else {}
     return [bot async for bot in db["clone_bots"].find(query)]
 
