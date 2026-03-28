@@ -32,6 +32,7 @@ def _tier_multiplier(country_code: str) -> float:
 async def create_clone_bot(owner_id: int, token: str, bot_username: str, custom_mongo_uri: Optional[str] = None) -> Dict:
     db = await _db()
     bots = db["clone_bots"]
+    LOGGER.info("create_clone_bot owner=%s username=@%s", owner_id, bot_username)
     bot_doc = {
         "token": token,
         "owner_id": owner_id,
@@ -58,6 +59,11 @@ async def create_clone_bot(owner_id: int, token: str, bot_username: str, custom_
         upsert=True,
     )
     return bot_doc
+
+
+async def get_clone_bot_any(token: str) -> Optional[Dict]:
+    db = await _db()
+    return await db["clone_bots"].find_one({"token": token})
 
 
 async def get_clone_bot(token: str) -> Optional[Dict]:

@@ -98,78 +98,80 @@ class CloneRuntimeManager:
             return False
 
     async def _dispatch(self, client: Client, message: Message):
-        if not message.from_user:
-            return
-        user_id = message.from_user.id
-        token = client.clone_meta["token"]
-        owner_id = client.clone_meta["owner_id"]
-        text = message.text or ""
-
-        if not self._allow_rate(token, user_id, "msg", 0.7):
-            return
-
-        if text.startswith("/start"):
-            await add_bot_user(token, user_id)
-            settings = await get_bot_settings(token)
-            welcome = settings.get("welcome", "Hi {first}, welcome!").format(first=message.from_user.first_name)
-            await message.reply_text(welcome)
-            return
-
-        if text.startswith("/dashboard"):
-            if user_id != owner_id:
-                return await message.reply_text("Owner only command.")
-            stats = await owner_dashboard(owner_id, token)
-            await message.reply_text(
-                "<b>Dashboard</b>\n"
-                f"Total Earnings: <code>${stats['lifetime']:.6f}</code>\n"
-                f"Today's Earnings: <code>${stats['today_earnings']:.6f}</code>\n"
-                f"Total Users: <code>{stats['total_users']}</code>\n"
-                f"Total Ad Views: <code>{stats['total_views']}</code>\n"
-                f"Available Balance: <code>${stats['balance']:.6f}</code>"
-            )
-            return
-
-        if text.startswith("/users"):
-            if user_id != owner_id:
+        try:
+            if not message.from_user:
                 return
-            total = await count_bot_users(token)
-            return await message.reply_text(f"{total} users are using this clone bot.")
+            user_id = message.from_user.id
+            token = client.clone_meta["token"]
+            owner_id = client.clone_meta["owner_id"]
+            text = message.text or ""
 
-        if text.startswith("/withdraw"):
-            if user_id != owner_id:
+            if not self._allow_rate(token, user_id, "msg", 0.7):
                 return
-            try:
-                amount_msg = await client.ask(user_id, "Enter amount to withdraw (minimum $0.5):", timeout=120)
-                upi_msg = await client.ask(user_id, "Enter UPI ID:", timeout=120)
-                amount = round(float(amount_msg.text.strip()), 6)
-                req, err = await create_withdrawal(owner_id, token, amount, upi_msg.text.strip())
-                if err == "minimum_not_met":
-                    return await message.reply_text("❌ Minimum withdrawal is $0.5")
-                if err:
-                    return await message.reply_text("❌ Insufficient balance")
-                await message.reply_text("✅ Withdrawal request created and sent for admin review.")
-                await self._notify_admin_withdrawal(req)
-            except Exception as e:
-                await message.reply_text(f"Error: {e}")
-            return
 
-        if text.startswith("/set_custom_db"):
-            if user_id != owner_id:
+            if text.startswith("/start"):
+                await add_bot_user(token, user_id)
+                settings = await get_bot_settings(token)
+                welcome = settings.get("welcome", "Hi {first}, welcome!").format(first=message.from_user.first_name)
+                await message.reply_text(welcome)
                 return
-            if len(message.command) < 2:
-                return await message.reply_text("Usage: /set_custom_db <mongodb-uri>")
-            ok = await set_owner_custom_mongo(token, owner_id, message.text.split(" ", 1)[1])
-            return await message.reply_text("✅ Custom MongoDB linked." if ok else "❌ Failed to set custom DB")
 
-        mapping = {
-            "/set_force_sub": "force_sub_channel",
-            "/set_update_channel": "update_channel",
-            "/set_bot_text": "bot_text",
-            "/set_bot_photo": "bot_photo",
-            "/set_welcome": "welcome",
-        }
-        for cmd, key in mapping.items():
-            if text.startswith(cmd):
+            if text.startswith("/dashboard"):
+                if user_id != owner_id:
+                    return await message.reply_text("Owner only command.")
+                stats = await owner_dashboard(owner_id, token)
+                await message.reply_text(
+                    "<b>Dashboard</b>\n"
+                    f"Total Earnings: <code>${stats['lifetime']:.6f}</code>\n"
+                    f"Today's Earnings: <code>${stats['today_earnings']:.6f}</code>\n"
+                    f"Total Users: <code>{stats['total_users']}</code>\n"
+                    f"Total Ad Views: <code>{stats['total_views']}</code>\n"
+                    f"Available Balance: <code>${stats['balance']:.6f}</code>"
+                )
+                return
+
+            if text.startswith("/users"):
+                if user_id != owner_id:
+                    return
+                total = await count_bot_users(token)
+                return await message.reply_text(f"{total} users are using this clone bot.")
+
+            if text.startswith("/withdraw"):
+                if user_id != owner_id:
+                    return
+                try:
+                    amount_msg = await client.ask(user_id, "Enter amount to withdraw (minimum $0.5):", timeout=120)
+                    upi_msg = await client.ask(user_id, "Enter UPI ID:", timeout=120)
+                    amount = round(float(amount_msg.text.strip()), 6)
+                    req, err = await create_withdrawal(owner_id, token, amount, upi_msg.text.strip())
+                    if err == "minimum_not_met":
+                        return await message.reply_text("❌ Minimum withdrawal is $0.5")
+                    if err:
+                        return await message.reply_text("❌ Insufficient balance")
+                    await message.reply_text("✅ Withdrawal request created and sent for admin review.")
+                    await self._notify_admin_withdrawal(req)
+                except Exception as e:
+                    await message.reply_text(f"Error: {e}")
+                return
+
+            if text.startswith("/set_custom_db"):
+                if user_id != owner_id:
+                    return
+                if len(message.command) < 2:
+                    return await message.reply_text("Usage: /set_custom_db <mongodb-uri>")
+                ok = await set_owner_custom_mongo(token, owner_id, message.text.split(" ", 1)[1])
+                return await message.reply_text("✅ Custom MongoDB linked." if ok else "❌ Failed to set custom DB")
+
+            mapping = {
+                "/set_force_sub": "force_sub_channel",
+                "/set_update_channel": "update_channel",
+                "/set_bot_text": "bot_text",
+                "/set_bot_photo": "bot_photo",
+                "/set_welcome": "welcome",
+            }
+            for cmd, key in mapping.items():
+                if not text.startswith(cmd):
+                    continue
                 if user_id != owner_id:
                     return
                 if len(message.command) < 2:
@@ -178,22 +180,28 @@ class CloneRuntimeManager:
                 ok = await update_bot_setting(token, owner_id, key, value)
                 return await message.reply_text("✅ Setting updated." if ok else "❌ Failed to update setting")
 
-        if text.startswith("/stats"):
-            total = await count_bot_users(token)
-            await message.reply_text(f"Bot stats\nUsers: {total}\nUptime: {datetime.utcnow().isoformat()}Z")
-            return
-
-        if text.startswith("/broadcast"):
-            if user_id != owner_id:
+            if text.startswith("/stats"):
+                total = await count_bot_users(token)
+                await message.reply_text(f"Bot stats\nUsers: {total}\nUptime: {datetime.utcnow().isoformat()}Z")
                 return
-            await message.reply_text("Reply-based /broadcast will be enabled in next update.")
-            return
 
-        if text.startswith("/batch") or text.startswith("/getlink"):
-            if user_id != owner_id:
+            if text.startswith("/broadcast"):
+                if user_id != owner_id:
+                    return
+                await message.reply_text("Reply-based /broadcast will be enabled in next update.")
                 return
-            await message.reply_text("Link tools are delegated to content module. Configure DB channel integration first.")
-            return
+
+            if text.startswith("/batch") or text.startswith("/getlink"):
+                if user_id != owner_id:
+                    return
+                await message.reply_text("Link tools are delegated to content module. Configure DB channel integration first.")
+                return
+        except Exception as e:
+            LOGGER.error("clone dispatch error token=%s err=%s", str(client.clone_meta.get("token", ""))[-8:], e)
+            try:
+                await message.reply_text(f"Error: {e}")
+            except Exception:
+                return
 
     async def _notify_admin_withdrawal(self, req: Dict):
         if not self.clients:
